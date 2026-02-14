@@ -47,6 +47,17 @@ const ALL_SLOTS = DAYS.flatMap(d => SLOT_MAP[d].map(t => `${d}-${t}`));
 // Pattern: S, _, S, S, _, S, _, S, S  (S=staple, _=empty for new)
 const STAPLE_PATTERN = [true, false, true, true, false, true, false, true, true];
 
+const STORE_SECTIONS = [
+  ["Produce", ["broccoli","bell pepper","pepper","snap peas","zucchini","cherry tomato","tomato","onion","red onion","cucumber","spinach","baby spinach","ginger","garlic","lemon","lime","scallion","green onion","cilantro","basil","mushroom","bok choy","cabbage","lettuce","bean sprout","jalapeño","avocado","sweet potato","eggplant","corn","kale","arugula","shallot"]],
+  ["Meat & Seafood", ["chicken","beef","flank steak","steak","pork","shrimp","salmon","fish","turkey","lamb","ground beef","ground turkey","chicken thigh","chicken breast"]],
+  ["Dairy & Eggs", ["feta","cheese","yogurt","cream","butter","egg","milk","mozzarella","parmesan","sour cream"]],
+  ["Tofu & Plant Protein", ["tofu","tempeh","edamame"]],
+  ["Grains & Pasta", ["rice","jasmine rice","noodle","pasta","pita","bread","tortilla","couscous","quinoa","flatbread","wrap","udon","soba"]],
+  ["Canned & Dry Goods", ["lentil","chickpea","black bean","coconut milk","tomato paste","tomato sauce","diced tomato","broth","stock","cornstarch","flour","sugar","panko","breadcrumb"]],
+  ["Sauces & Condiments", ["soy sauce","oyster sauce","sesame oil","fish sauce","sriracha","gochujang","miso","tahini","vinegar","honey","teriyaki","hoisin","curry paste","hot sauce","worcestershire","hummus","olive oil","chili oil","sambal"]],
+  ["Spices & Herbs", ["cumin","paprika","turmeric","coriander","oregano","chili flake","red pepper flake","curry powder","cinnamon","five spice","sesame seed","thyme","rosemary","bay leaf"]],
+];
+
 const DEFAULT_PREFS = {
   cuisines: ["Chinese","Asian","Mediterranean","Korean","Japanese","Thai","Mexican"],
   primaryCuisines: ["Chinese","Mediterranean"],
@@ -117,6 +128,27 @@ async function aiGenerate(prompt, apiKey, onError) {
     const text = data.content?.map(b => b.text||"").join("")||"";
     const m = text.match(/\[[\s\S]*\]/);
     return JSON.parse(m ? m[0] : text.replace(/```json|```/g,"").trim());
+  } catch(e) { onError(e.message); return null; }
+}
+
+async function aiExpandRecipe(text, apiKey, onError) {
+  if (!apiKey) { onError("Add your Anthropic API key in Shop & Manage → Preferences to expand ideas."); return null; }
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method:"POST",
+      headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+      body:JSON.stringify({
+        model:"claude-sonnet-4-20250514", max_tokens:2048,
+        system:`You are a meal planning assistant. The user will give you a meal idea (a name and optionally a short description). Turn it into a full recipe JSON object. Return ONLY a valid JSON object (not an array). No markdown, no fences, no explanation. Schema: {"name":"...","description":"One sentence overview","cuisine":"...","prepTime":"X min","cookTime":"Y min","prepFriendly":true/false,"whyYoullLikeIt":"1-2 sentences","ingredients":["qty + ingredient, for 2.5 servings"],"steps":["concise step"]}. Use 6-10 ingredients with quantities. 4-6 steps. Low sodium. No birch-allergy foods (apples, pears, cherries, peaches, plums, apricots, kiwi, hazelnuts, almonds, walnuts, raw carrots/celery).`,
+        messages:[{role:"user",content:text}],
+      }),
+    });
+    if (!res.ok) { const t = await res.text(); onError(`API error ${res.status}: ${t.slice(0,120)}`); return null; }
+    const data = await res.json();
+    const raw = data.content?.map(b => b.text||"").join("")||"";
+    const cleaned = raw.replace(/```json|```/g,"").trim();
+    const m = cleaned.match(/\{[\s\S]*\}/);
+    return JSON.parse(m ? m[0] : cleaned);
   } catch(e) { onError(e.message); return null; }
 }
 
@@ -204,9 +236,10 @@ function App() {
   const [dragItem, setDragItem] = useState(null);
   const [dragOver, setDragOver] = useState(null);
   const [editPrefs, setEditPrefs] = useState(false);
-  const [shopChecked, setShopChecked] = useState({});
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
   const [tapSelected, setTapSelected] = useState(null); // { meal, fromSlot } or null
+  const [customText, setCustomText] = useState("");
+  const [customLoading, setCustomLoading] = useState(false);
 
   const wk = weekKey(currentMonday);
   const weekSlots = allWeeks[wk] || {};
@@ -246,6 +279,18 @@ function App() {
     setLoading(false);
   };
 
+  // Expand custom meal idea
+  const expandCustom = async () => {
+    if (!customText.trim()) return;
+    setCustomLoading(true); setError(null);
+    const meal = await aiExpandRecipe(customText.trim(), prefs.apiKey, setError);
+    if (meal) {
+      setSuggestions(p => [{...meal, id:"c"+Date.now()}, ...p]);
+      setCustomText("");
+    }
+    setCustomLoading(false);
+  };
+
   // Drag & drop
   const onDragStart = (e,meal,fromSlot) => { setTapSelected(null); setDragItem({meal,fromSlot}); e.dataTransfer.effectAllowed="move"; try{e.dataTransfer.setData("text/plain",meal.name)}catch{} };
   const onDragOverSlot = (e,sk) => { e.preventDefault(); setDragOver(sk); };
@@ -280,7 +325,18 @@ function App() {
         if(!map[base].meals.includes(meal.name)) map[base].meals.push(meal.name);
       });
     });
-    return Object.values(map).sort((a,b)=>a.key.localeCompare(b.key));
+    // Group by store section
+    const items = Object.values(map);
+    const grouped = [];
+    const used = new Set();
+    STORE_SECTIONS.forEach(([section, keywords]) => {
+      const matches = items.filter(item => !used.has(item.key) && keywords.some(kw => item.key.includes(kw)));
+      matches.forEach(m => used.add(m.key));
+      if (matches.length) grouped.push({ section, items: matches.sort((a,b) => a.key.localeCompare(b.key)) });
+    });
+    const other = items.filter(item => !used.has(item.key)).sort((a,b) => a.key.localeCompare(b.key));
+    if (other.length) grouped.push({ section: "Other", items: other });
+    return grouped;
   };
 
   const promoteToStaple = (meal) => { if(staples.find(s=>s.name===meal.name)) return; setStaples(p=>[...p,{...meal,id:"s"+Date.now()}]); };
@@ -290,9 +346,10 @@ function App() {
     const rows = ALL_SLOTS.map(k=>{const meal=weekSlots[k]; if(!meal) return `<tr style="border-bottom:1px solid #e8e0d4"><td style="padding:8px 12px;color:#a08b6f;width:100px">${k.replace("-"," · ").toUpperCase()}</td><td style="padding:8px 12px;color:#ccc;font-style:italic">—</td></tr>`; const isSt=staples.some(s=>s.name===meal.name); return `<tr style="border-bottom:1px solid #e8e0d4"><td style="padding:8px 12px;font-weight:700;color:#3a2f23;width:100px">${k.replace("-"," · ").toUpperCase()}</td><td style="padding:8px 12px"><strong>${isSt?'⭐':'✨'} ${meal.name}</strong><br><span style="font-size:11px;color:#8b7355">${meal.cuisine} · Cook ${meal.cookTime}${meal.prepFriendly?' · 📦':''}</span></td></tr>`;}).join("");
     const recipes=[...new Map(ALL_SLOTS.map(k=>weekSlots[k]).filter(Boolean).map(m=>[m.name,m])).values()];
     const recipeHTML=recipes.map(m=>`<div style="break-inside:avoid;border:1.5px solid #e8e0d4;border-radius:10px;padding:16px 20px;margin-bottom:14px;background:#faf8f5"><div style="border-left:4px solid #b5956b;padding-left:12px;margin-bottom:10px"><strong style="font-size:16px">${m.name}</strong><br><span style="font-size:11px;color:#6b705c">${m.cuisine} · Prep ${m.prepTime} · Cook ${m.cookTime} · ${SERVINGS}</span></div><div style="display:flex;gap:20px"><div style="flex:1"><strong style="font-size:12px">Ingredients</strong><ul style="font-size:11px;padding-left:16px;line-height:1.8;margin:4px 0 0">${m.ingredients.map(i=>`<li>${i}</li>`).join("")}</ul></div><div style="flex:1.2"><strong style="font-size:12px">Steps</strong><ol style="font-size:11px;padding-left:16px;line-height:1.7;margin:4px 0 0">${m.steps.map(s=>`<li style="margin-bottom:3px">${s}</li>`).join("")}</ol></div></div></div>`).join("");
-    const shopItems=getShopList();
-    const shopRows=shopItems.map(i=>`<tr style="border-bottom:1px solid #e8e0d4"><td style="padding:5px 10px;width:24px">☐</td><td style="padding:5px 10px;font-size:13px">${i.display}</td></tr>`).join("");
-    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Meal Plan – ${fmtWeek(currentMonday)}</title><style>@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@400;600;700&display=swap');*{box-sizing:border-box;margin:0;padding:0}body{font-family:'DM Sans',sans-serif;color:#3a2f23}@media print{body{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}.pb{break-before:page}}@page{margin:.5in}</style></head><body><div style="background:linear-gradient(135deg,#3a2f23,#5c4a36);padding:22px 26px;border-radius:10px;margin-bottom:18px"><div style="font-family:'Playfair Display',serif;font-size:24px;font-weight:700;color:#faf8f5">Keil Meal Planning</div><div style="font-size:12px;color:#c9b99a;margin-top:3px">${fmtWeek(currentMonday)} · ${SERVINGS}</div></div><table style="width:100%;border-collapse:collapse;border:1.5px solid #e8e0d4;margin-bottom:24px"><thead><tr style="background:#b5956b"><th style="padding:8px 12px;text-align:left;color:#fff;font-size:12px">SLOT</th><th style="padding:8px 12px;text-align:left;color:#fff;font-size:12px">MEAL</th></tr></thead><tbody>${rows}</tbody></table><div class="pb"></div><div style="background:linear-gradient(135deg,#3a2f23,#5c4a36);padding:16px 22px;border-radius:10px;margin-bottom:14px"><div style="font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:#faf8f5">🛒 Shopping List · ${shopItems.length} items</div></div><table style="width:100%;border-collapse:collapse;border:1.5px solid #e8e0d4;margin-bottom:24px"><tbody>${shopRows}</tbody></table><div class="pb"></div><div style="background:linear-gradient(135deg,#3a2f23,#5c4a36);padding:16px 22px;border-radius:10px;margin-bottom:14px"><div style="font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:#faf8f5">📖 Recipes</div></div>${recipeHTML}</body></html>`;
+    const shopGroups=getShopList();
+    const shopTotal=shopGroups.reduce((n,g)=>n+g.items.length,0);
+    const shopRows=shopGroups.map(g=>`<tr style="background:#f0ebe3"><td colspan="2" style="padding:8px 12px;font-weight:700;font-size:12px;color:#5c4a36;text-transform:uppercase;letter-spacing:.5px">${g.section}</td></tr>${g.items.map(i=>`<tr style="border-bottom:1px solid #e8e0d4"><td style="padding:5px 10px;width:24px">☐</td><td style="padding:5px 10px;font-size:13px">${i.display}</td></tr>`).join("")}`).join("");
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Meal Plan – ${fmtWeek(currentMonday)}</title><style>@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@400;600;700&display=swap');*{box-sizing:border-box;margin:0;padding:0}body{font-family:'DM Sans',sans-serif;color:#3a2f23}@media print{body{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}.pb{break-before:page}}@page{margin:.5in}</style></head><body><div style="background:linear-gradient(135deg,#3a2f23,#5c4a36);padding:22px 26px;border-radius:10px;margin-bottom:18px"><div style="font-family:'Playfair Display',serif;font-size:24px;font-weight:700;color:#faf8f5">Keil Meal Planning</div><div style="font-size:12px;color:#c9b99a;margin-top:3px">${fmtWeek(currentMonday)} · ${SERVINGS}</div></div><table style="width:100%;border-collapse:collapse;border:1.5px solid #e8e0d4;margin-bottom:24px"><thead><tr style="background:#b5956b"><th style="padding:8px 12px;text-align:left;color:#fff;font-size:12px">SLOT</th><th style="padding:8px 12px;text-align:left;color:#fff;font-size:12px">MEAL</th></tr></thead><tbody>${rows}</tbody></table><div class="pb"></div><div style="background:linear-gradient(135deg,#3a2f23,#5c4a36);padding:16px 22px;border-radius:10px;margin-bottom:14px"><div style="font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:#faf8f5">🛒 Shopping List · ${shopTotal} items</div></div><table style="width:100%;border-collapse:collapse;border:1.5px solid #e8e0d4;margin-bottom:24px"><tbody>${shopRows}</tbody></table><div class="pb"></div><div style="background:linear-gradient(135deg,#3a2f23,#5c4a36);padding:16px 22px;border-radius:10px;margin-bottom:14px"><div style="font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:#faf8f5">📖 Recipes</div></div>${recipeHTML}</body></html>`;
     const blob=new Blob([html],{type:"text/html"});const url=URL.createObjectURL(blob);const w=window.open(url,"_blank");if(w) w.onload=()=>setTimeout(()=>w.print(),400);
   };
 
@@ -332,12 +389,12 @@ function App() {
 
           {/* Week strip */}
           <div style={{overflowX:"auto",padding:"14px 10px 6px",background:`linear-gradient(180deg,${C.card} 0%,${C.bg} 100%)`}}>
-            <div style={{display:"flex",gap:7,minWidth:"fit-content"}}>
+            <div style={{display:"flex",gap:7}}>
               {DAYS.map((day,di)=>{
                 const isWE = day==="Sat"||day==="Sun";
                 const dt = new Date(currentMonday); dt.setDate(currentMonday.getDate()+di);
                 return (
-                  <div key={day} style={{minWidth:128,width:128,flexShrink:0,background:isWE?C.warm:C.card,border:`1.5px solid ${C.border}`,borderRadius:12,padding:"10px 8px 8px"}}>
+                  <div key={day} style={{flex:1,minWidth:120,background:isWE?C.warm:C.card,border:`1.5px solid ${C.border}`,borderRadius:12,padding:"10px 8px 8px"}}>
                     <div style={{textAlign:"center",marginBottom:8}}>
                       <div style={{fontSize:11,fontWeight:700,color:C.light,textTransform:"uppercase",letterSpacing:.5}}>{day}</div>
                       <div style={{fontSize:10,color:C.light}}>{dt.toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>
@@ -375,72 +432,100 @@ function App() {
             </div>
           </div>
 
-          {/* Action bar */}
-          <div style={{display:"flex",gap:8,padding:"10px 14px",flexWrap:"wrap",alignItems:"center"}}>
-            <button onClick={generate} disabled={loading} style={btn(C.accent,C.white,{padding:"10px 18px",borderRadius:10,opacity:loading?.6:1})}>
-              {loading ? <><span className="spinner" style={{marginRight:8}}/>Generating…</> : "✨ Generate 10 Ideas"}
-            </button>
-            {filledCount>0 && <button onClick={exportPDF} style={btn(C.dark,C.white,{padding:"10px 16px",borderRadius:10})}>📄 Export PDF</button>}
-            {filledCount>0 && <button onClick={()=>{setAllWeeks(p=>({...p,[wk]:{}}));}} style={btn("transparent",C.red,{padding:"10px 16px",borderRadius:10,border:`1.5px solid ${C.red}`})}>Clear Week</button>}
-          </div>
-
-          {error && (
-            <div style={{margin:"0 14px",background:"#fdf0ef",border:"1.5px solid #e8a9a5",borderRadius:10,padding:"10px 14px",color:"#8b3a35",fontSize:13,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
-              <span>⚠️ {error}</span>
-              <button onClick={()=>{setError(null);generate();}} style={btn(C.red,C.white,{padding:"5px 12px",fontSize:11,flexShrink:0})}>Retry</button>
-            </div>
-          )}
-
-          {/* Suggestions */}
-          {suggestions.length > 0 && (
-            <div style={{padding:"8px 14px 0"}}>
-              <div style={{fontSize:14,fontWeight:700,color:C.dark,marginBottom:10,fontFamily:"'Playfair Display',serif"}}>
-                New Ideas — tap a meal, then tap a slot to place it
+          {/* Bottom half: two-column layout */}
+          <div style={{display:"flex",gap:14,padding:"10px 14px 0",flexWrap:"wrap"}}>
+            {/* Left column: actions + suggestions */}
+            <div style={{flex:"2 1 400px",minWidth:0}}>
+              {/* Action bar */}
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:10}}>
+                <button onClick={generate} disabled={loading} style={btn(C.accent,C.white,{padding:"10px 18px",borderRadius:10,opacity:loading?.6:1})}>
+                  {loading ? <><span className="spinner" style={{marginRight:8}}/>Generating…</> : "✨ Generate 10 Ideas"}
+                </button>
+                {filledCount>0 && <button onClick={exportPDF} style={btn(C.dark,C.white,{padding:"10px 16px",borderRadius:10})}>📄 Export PDF</button>}
+                {filledCount>0 && <button onClick={()=>{setAllWeeks(p=>({...p,[wk]:{}}));}} style={btn("transparent",C.red,{padding:"10px 16px",borderRadius:10,border:`1.5px solid ${C.red}`})}>Clear Week</button>}
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:10}}>
-                {suggestions.filter(s=>!assignedNames.has(s.name)).map(meal=>{
-                  const isSel=tapSelected&&tapSelected.meal.name===meal.name&&!tapSelected.fromSlot;
-                  return (
-                  <div key={meal.id} className={`scard ${isSel?'tap-selected':''}`} draggable onDragStart={e=>onDragStart(e,meal,null)} onDragEnd={onDragEnd}
-                    onClick={(e)=>{ if(e.target.closest('button')) return; tapSelectMeal(meal,null); }}
-                    style={{background:C.card,border:`1.5px solid ${isSel?C.accent:C.border}`,borderRadius:12,padding:"14px 16px"}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:15,fontWeight:700,color:C.dark,marginBottom:3,fontFamily:"'Playfair Display',serif"}}>{meal.name}</div>
-                        <div style={{fontSize:12,color:C.light,marginBottom:6,lineHeight:1.5}}>{meal.description}</div>
-                      </div>
-                      <button onClick={e=>{e.stopPropagation();setModal(meal);}} style={btn(C.green,C.white,{padding:"5px 10px",fontSize:11,flexShrink:0})}>Recipe</button>
-                    </div>
-                    {meal.whyYoullLikeIt && (
-                      <div style={{fontSize:12,color:C.med,lineHeight:1.5,marginBottom:8,background:"#f5f0e8",borderRadius:8,padding:"8px 10px",borderLeft:`3px solid ${C.accent}`}}>
-                        💛 {meal.whyYoullLikeIt}
-                      </div>
-                    )}
-                    <div style={{display:"flex",gap:8,flexWrap:"wrap",fontSize:11,color:C.light}}>
-                      <span>🍳 {meal.cuisine}</span><span>🔥 {meal.cookTime}</span>
-                      {meal.prepFriendly && <span>📦 Prep-friendly</span>}
-                      <span style={{marginLeft:"auto",color:C.accent,fontWeight:600,fontSize:10}}>TAP to select →</span>
-                    </div>
+
+              {error && (
+                <div style={{background:"#fdf0ef",border:"1.5px solid #e8a9a5",borderRadius:10,padding:"10px 14px",color:"#8b3a35",fontSize:13,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:10}}>
+                  <span>⚠️ {error}</span>
+                  <button onClick={()=>{setError(null);generate();}} style={btn(C.red,C.white,{padding:"5px 12px",fontSize:11,flexShrink:0})}>Retry</button>
+                </div>
+              )}
+
+              {/* Suggestions */}
+              {suggestions.length > 0 && (
+                <div>
+                  <div style={{fontSize:14,fontWeight:700,color:C.dark,marginBottom:10,fontFamily:"'Playfair Display',serif"}}>
+                    New Ideas — tap a meal, then tap a slot to place it
                   </div>
-                  );
-                })}
-              </div>
-              {suggestions.filter(s=>!assignedNames.has(s.name)).length===0 && (
-                <div style={{textAlign:"center",padding:20,color:C.light,fontSize:14}}>All ideas assigned! Generate more if needed.</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:10}}>
+                    {suggestions.filter(s=>!assignedNames.has(s.name)).map(meal=>{
+                      const isSel=tapSelected&&tapSelected.meal.name===meal.name&&!tapSelected.fromSlot;
+                      return (
+                      <div key={meal.id} className={`scard ${isSel?'tap-selected':''}`} draggable onDragStart={e=>onDragStart(e,meal,null)} onDragEnd={onDragEnd}
+                        onClick={(e)=>{ if(e.target.closest('button')) return; tapSelectMeal(meal,null); }}
+                        style={{background:C.card,border:`1.5px solid ${isSel?C.accent:C.border}`,borderRadius:12,padding:"14px 16px"}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:15,fontWeight:700,color:C.dark,marginBottom:3,fontFamily:"'Playfair Display',serif"}}>{meal.name}</div>
+                            <div style={{fontSize:12,color:C.light,marginBottom:6,lineHeight:1.5}}>{meal.description}</div>
+                          </div>
+                          <button onClick={e=>{e.stopPropagation();setModal(meal);}} style={btn(C.green,C.white,{padding:"5px 10px",fontSize:11,flexShrink:0})}>Recipe</button>
+                        </div>
+                        {meal.whyYoullLikeIt && (
+                          <div style={{fontSize:12,color:C.med,lineHeight:1.5,marginBottom:8,background:"#f5f0e8",borderRadius:8,padding:"8px 10px",borderLeft:`3px solid ${C.accent}`}}>
+                            💛 {meal.whyYoullLikeIt}
+                          </div>
+                        )}
+                        <div style={{display:"flex",gap:8,flexWrap:"wrap",fontSize:11,color:C.light}}>
+                          <span>🍳 {meal.cuisine}</span><span>🔥 {meal.cookTime}</span>
+                          {meal.prepFriendly && <span>📦 Prep-friendly</span>}
+                          <span style={{marginLeft:"auto",color:C.accent,fontWeight:600,fontSize:10}}>TAP to select →</span>
+                        </div>
+                      </div>
+                      );
+                    })}
+                  </div>
+                  {suggestions.filter(s=>!assignedNames.has(s.name)).length===0 && (
+                    <div style={{textAlign:"center",padding:20,color:C.light,fontSize:14}}>All ideas assigned! Generate more if needed.</div>
+                  )}
+                </div>
+              )}
+
+              {/* Empty state */}
+              {suggestions.length===0 && filledCount===0 && !loading && (
+                <div style={{textAlign:"center",padding:"40px 20px",color:C.light}}>
+                  <div style={{fontSize:36,marginBottom:10}}>🍳</div>
+                  <div style={{fontFamily:"'Playfair Display',serif",fontSize:18,color:C.dark,marginBottom:6}}>Plan your week</div>
+                  <div style={{fontSize:14,maxWidth:360,margin:"0 auto",lineHeight:1.6}}>
+                    Staples auto-fill when you navigate to a new week. Hit <strong>Generate 10 Ideas</strong> to discover new dishes and drag them on!
+                  </div>
+                </div>
               )}
             </div>
-          )}
 
-          {/* Empty state */}
-          {suggestions.length===0 && filledCount===0 && !loading && (
-            <div style={{textAlign:"center",padding:"40px 20px",color:C.light}}>
-              <div style={{fontSize:36,marginBottom:10}}>🍳</div>
-              <div style={{fontFamily:"'Playfair Display',serif",fontSize:18,color:C.dark,marginBottom:6}}>Plan your week</div>
-              <div style={{fontSize:14,maxWidth:360,margin:"0 auto",lineHeight:1.6}}>
-                Staples auto-fill when you navigate to a new week. Hit <strong>Generate 10 Ideas</strong> to discover new dishes and drag them on!
+            {/* Right column: My Ideas */}
+            <div style={{flex:"1 1 260px",minWidth:260}}>
+              <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:14,padding:"16px 18px",position:"sticky",top:10}}>
+                <div style={{fontFamily:"'Playfair Display',serif",fontSize:16,fontWeight:700,color:C.dark,marginBottom:4}}>My Ideas</div>
+                <div style={{fontSize:12,color:C.light,marginBottom:12,lineHeight:1.5}}>Type a meal name and optional description. AI will expand it into a full recipe.</div>
+                <textarea
+                  value={customText}
+                  onChange={e=>setCustomText(e.target.value)}
+                  placeholder={"e.g. Teriyaki salmon with edamame rice\nor: Quick chickpea curry — creamy, mild, toddler-friendly"}
+                  rows={4}
+                  style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${C.border}`,fontSize:13,fontFamily:"'DM Sans',sans-serif",resize:"vertical",lineHeight:1.5,background:C.white}}
+                />
+                <button
+                  onClick={expandCustom}
+                  disabled={customLoading||!customText.trim()}
+                  style={btn(C.accent,C.white,{marginTop:10,width:"100%",padding:"10px 16px",borderRadius:10,opacity:(customLoading||!customText.trim())?.6:1})}
+                >
+                  {customLoading ? <><span className="spinner" style={{marginRight:8}}/>Expanding…</> : "Expand to Recipe"}
+                </button>
               </div>
             </div>
-          )}
+          </div>
         </div>
       )}
 
@@ -449,21 +534,24 @@ function App() {
         <div style={{padding:"20px 20px 40px",maxWidth:640,margin:"0 auto"}}>
           {/* Shopping */}
           <h2 style={{fontFamily:"'Playfair Display',serif",color:C.dark,fontSize:22,margin:"0 0 4px"}}>🛒 Shopping List</h2>
-          <p style={{color:C.light,fontSize:13,margin:"0 0 14px"}}>{filledCount>0?`${fmtWeek(currentMonday)} · ${getShopList().length} items`:"Fill your meal plan first"}</p>
+          <p style={{color:C.light,fontSize:13,margin:"0 0 14px"}}>{filledCount>0?`${fmtWeek(currentMonday)} · ${getShopList().reduce((n,g)=>n+g.items.length,0)} items`:"Fill your meal plan first"}</p>
           {filledCount>0 ? (()=>{
-            const items=getShopList(); const ck=Object.keys(shopChecked).filter(k=>shopChecked[k]).length;
+            const groups=getShopList();
             return (
               <div style={{marginBottom:28}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                  <span style={{fontSize:14,fontWeight:600,color:C.dark}}>{ck}/{items.length} checked</span>
-                  <button onClick={()=>navigator.clipboard.writeText(`🛒 Shopping – ${fmtWeek(currentMonday)}\n\n${items.map(v=>`☐ ${v.display}`).join("\n")}`)} style={btn(C.accent,C.white,{padding:"6px 12px",fontSize:12})}>Copy 📋</button>
+                <div style={{display:"flex",justifyContent:"flex-end",marginBottom:10}}>
+                  <button onClick={()=>navigator.clipboard.writeText(`🛒 Shopping – ${fmtWeek(currentMonday)}\n\n${groups.map(g=>`${g.section}\n${g.items.map(v=>`  • ${v.display}`).join("\n")}`).join("\n\n")}`)} style={btn(C.accent,C.white,{padding:"6px 12px",fontSize:12})}>Copy 📋</button>
                 </div>
-                {items.map(item=>(
-                  <div key={item.key} onClick={()=>setShopChecked(p=>({...p,[item.key]:!p[item.key]}))} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,background:shopChecked[item.key]?C.warm:C.card,border:`1px solid ${C.border}`,marginBottom:4,cursor:"pointer",opacity:shopChecked[item.key]?.5:1,transition:"all .15s"}}>
-                    <div style={{width:20,height:20,borderRadius:5,flexShrink:0,border:shopChecked[item.key]?"none":`2px solid #c9b99a`,background:shopChecked[item.key]?C.accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center",color:C.white,fontSize:12,fontWeight:700}}>{shopChecked[item.key]&&"✓"}</div>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:13,fontWeight:600,color:C.dark,textDecoration:shopChecked[item.key]?"line-through":"none"}}>{item.display}</div>
-                      {item.meals.length>1 && <div style={{fontSize:10,color:C.light}}>used in {item.meals.length} dishes</div>}
+                {groups.map(g=>(
+                  <div key={g.section} style={{marginBottom:14}}>
+                    <div style={{fontSize:12,fontWeight:700,color:C.light,textTransform:"uppercase",letterSpacing:.5,marginBottom:6,paddingBottom:4,borderBottom:`1px solid ${C.border}`}}>{g.section}</div>
+                    <div style={{paddingLeft:4}}>
+                      {g.items.map(item=>(
+                        <div key={item.key} style={{fontSize:13,color:C.dark,padding:"3px 0",lineHeight:1.5}}>
+                          {item.display}
+                          {item.meals.length>1 && <span style={{fontSize:10,color:C.light,marginLeft:6}}>({item.meals.length} dishes)</span>}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ))}
