@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#3a2f23"/>
+  <circle cx="256" cy="240" r="140" fill="none" stroke="#b5956b" stroke-width="18"/>
+  <circle cx="256" cy="240" r="90" fill="none" stroke="#b5956b" stroke-width="8" opacity="0.4"/>
+  <line x1="256" y1="100" x2="256" y2="60" stroke="#b5956b" stroke-width="12" stroke-linecap="round"/>
+  <line x1="310" y1="110" x2="330" y2="74" stroke="#b5956b" stroke-width="10" stroke-linecap="round" opacity="0.7"/>
+  <line x1="202" y1="110" x2="182" y2="74" stroke="#b5956b" stroke-width="10" stroke-linecap="round" opacity="0.7"/>
+  <text x="256" y="450" text-anchor="middle" font-family="sans-serif" font-weight="700" font-size="72" fill="#b5956b">KMP</text>
+</svg>

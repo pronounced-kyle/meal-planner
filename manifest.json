@@ -1,0 +1,26 @@
+{
+  "name": "Keil Meal Planning",
+  "short_name": "Keil Meals",
+  "description": "Weekly family meal planner with AI-powered suggestions",
+  "start_url": "/meal-planner/",
+  "display": "standalone",
+  "background_color": "#f5f1eb",
+  "theme_color": "#3a2f23",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

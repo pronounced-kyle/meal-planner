@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Keil Meal Planning</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#3a2f23">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700;800&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; touch-action: manipulation; }
+    body { font-family: 'DM Sans', sans-serif; background: #f5f1eb; color: #3a2f23; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+    .spinner { width:18px;height:18px;border-radius:50%;border:2.5px solid #d4c9b8;border-top-color:#b5956b;animation:spin .8s linear infinite;display:inline-block;vertical-align:middle }
+    @keyframes spin { to { transform:rotate(360deg) } }
+    .slot-drop { transition: all .15s; }
+    .slot-drop.over { background: #e8dfd1 !important; border-color: #b5956b !important; transform: scale(1.02); }
+    .scard { cursor: grab; transition: all .15s; }
+    .scard:active { cursor: grabbing; opacity: .8; }
+    ::-webkit-scrollbar { height:6px;width:6px }
+    ::-webkit-scrollbar-thumb { background:#d4c9b8;border-radius:3px }
+    input, textarea, select { font-family: 'DM Sans', sans-serif; }
+    @keyframes pulse-border { 0%,100%{border-color:#b5956b;box-shadow:0 0 0 0 rgba(181,149,107,.3)} 50%{border-color:#d4b88a;box-shadow:0 0 0 6px rgba(181,149,107,0)} }
+    .slot-targetable { animation: pulse-border 1.5s ease-in-out infinite; cursor: pointer !important; }
+    .tap-selected { border-color: #b5956b !important; box-shadow: 0 0 0 3px rgba(181,149,107,.35) !important; }
+    .tap-banner { position:sticky;top:0;z-index:100;background:linear-gradient(135deg,#3a2f23,#5c4a36);color:#faf8f5;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:14px;font-weight:600 }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ─── Constants ───
+const DAYS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+const SLOT_MAP = { Mon:["dinner"],Tue:["dinner"],Wed:["dinner"],Thu:["dinner"],Fri:["dinner"],Sat:["lunch","dinner"],Sun:["lunch","dinner"] };
+const SERVINGS = "2 adults + 1 toddler";
+const ALL_SLOTS = DAYS.flatMap(d => SLOT_MAP[d].map(t => `${d}-${t}`));
+
+// Staple slot pattern: which of the 9 slots get staples vs new dishes
+// Pattern: S, _, S, S, _, S, _, S, S  (S=staple, _=empty for new)
+const STAPLE_PATTERN = [true, false, true, true, false, true, false, true, true];
+
+const DEFAULT_PREFS = {
+  cuisines: ["Chinese","Asian","Mediterranean","Korean","Japanese","Thai","Mexican"],
+  primaryCuisines: ["Chinese","Mediterranean"],
+  dietaryNotes: "Low-sodium, heart-healthy. Birch tree allergy — avoid apples, pears, cherries, peaches, plums, apricots, kiwi, hazelnuts, almonds, walnuts, carrots (raw), celery (raw).",
+  cookingStyle: "Quick prep, Sunday meal-prep friendly. Weeknight dinners under 30 min.",
+  favoriteIngredients: ["rice","vegetables","chicken","beef","tofu","soy sauce","ginger","garlic","olive oil","lemon","chickpeas","lentils"],
+  apiKey: "",
+};
+
+const DEFAULT_STAPLES = [
+  {
+    id:"s1", name:"Chicken Stir-Fry with Rice",
+    description:"Quick wok-fried chicken with seasonal veggies and soy-ginger sauce over jasmine rice.",
+    cuisine:"Asian", prepTime:"15 min", cookTime:"10 min", prepFriendly:true,
+    whyYoullLikeIt:"Fast, flavorful, endlessly customizable with whatever veggies you have. Toddler-approved mild soy-ginger flavor.",
+    ingredients:["1 lb chicken breast, sliced thin","1.5 cups jasmine rice","2 cups broccoli florets","1 bell pepper, sliced","1 cup snap peas","2 tbsp low-sodium soy sauce","1 tbsp sesame oil","1 inch ginger, minced","3 cloves garlic, minced","1 tsp cornstarch"],
+    steps:["Toss chicken with soy sauce, cornstarch, sesame oil. Marinate 15 min or overnight.","Cook rice. Heat wok over high heat with sesame oil.","Stir-fry chicken 3–4 min. Remove. Stir-fry veggies 2–3 min.","Return chicken, add ginger + garlic, toss 30 sec. Serve over rice."],
+  },
+  {
+    id:"s2", name:"Mediterranean Lentil Bowl",
+    description:"Hearty lentils with roasted zucchini, cherry tomatoes, feta, and a bright lemon-herb dressing over baby spinach.",
+    cuisine:"Mediterranean", prepTime:"10 min", cookTime:"25 min", prepFriendly:true,
+    whyYoullLikeIt:"Warm, filling, and heart-healthy. Roasted veggies and feta add great texture. Lentils prep beautifully on Sunday.",
+    ingredients:["1 cup green/brown lentils","1 medium zucchini, diced","1 cup cherry tomatoes, halved","½ red onion, diced","⅓ cup crumbled feta","3 tbsp olive oil","2 tbsp lemon juice","1 tsp oregano","½ tsp cumin","2 cups baby spinach"],
+    steps:["Cook lentils with cumin until tender (~25 min). Drain.","Toss zucchini + onion with olive oil, roast at 425°F for 15 min.","Whisk olive oil, lemon juice, oregano for dressing.","Bowl: spinach, lentils, roasted veggies, tomatoes, feta + dressing."],
+  },
+  {
+    id:"s3", name:"Beef & Broccoli",
+    description:"Tender sliced flank steak and crisp broccoli in a savory low-sodium oyster sauce over steamed jasmine rice.",
+    cuisine:"Chinese", prepTime:"15 min", cookTime:"10 min", prepFriendly:true,
+    whyYoullLikeIt:"Classic comfort food that tastes better than takeout. Overnight marinating makes the beef melt-in-your-mouth tender.",
+    ingredients:["1 lb flank steak, sliced thin","3 cups broccoli florets","1.5 cups jasmine rice","2 tbsp low-sodium oyster sauce","1 tbsp low-sodium soy sauce","1 tbsp sesame oil","1 inch ginger, minced","3 cloves garlic, minced","1 tsp cornstarch"],
+    steps:["Toss steak with soy sauce, cornstarch, sesame oil. Marinate 15+ min.","Cook rice. Blanch broccoli 1–2 min, drain.","Sear beef in hot wok in batches, 1–2 min/side. Remove.","Add garlic + ginger 30 sec. Return beef, add broccoli + oyster sauce. Serve over rice."],
+  },
+  {
+    id:"s4", name:"Chicken Shawarma Plates",
+    description:"Warmly spiced chicken thighs with creamy hummus, a bright cucumber-tomato salad, and warm pita bread.",
+    cuisine:"Mediterranean", prepTime:"15 min", cookTime:"12 min", prepFriendly:true,
+    whyYoullLikeIt:"The spice blend smells incredible. Great for eating with your hands (toddler-friendly!). Overnight marinating = 12 min dinner.",
+    ingredients:["1.5 lb chicken thighs, boneless","1 tsp each: cumin, paprika, turmeric, coriander","3 tbsp olive oil","1 lemon, juiced","½ cup hummus","1 cucumber, diced","2 tomatoes, diced","¼ red onion, sliced","4 pita breads"],
+    steps:["Mix spices + olive oil + lemon. Coat chicken. Marinate overnight.","Make salad: cucumber, tomato, onion with oil + lemon.","Pan-sear chicken 5–6 min/side.","Warm pita. Slice chicken. Plate with hummus, salad, pita."],
+  },
+];
+
+// ─── Storage (localStorage for GitHub Pages) ───
+function load(key, fallback) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
+}
+function save(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch(e) { console.error(e); }
+}
+
+// ─── AI ───
+async function aiGenerate(prompt, apiKey, onError) {
+  if (!apiKey) { onError("Add your Anthropic API key in Shop & Manage → Preferences to generate ideas."); return null; }
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method:"POST",
+      headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+      body:JSON.stringify({
+        model:"claude-sonnet-4-20250514", max_tokens:4096,
+        system:"You are a meal planning assistant. Return ONLY a valid JSON array. No markdown, no fences, no explanation.",
+        messages:[{role:"user",content:prompt}],
+      }),
+    });
+    if (!res.ok) { const t = await res.text(); onError(`API error ${res.status}: ${t.slice(0,120)}`); return null; }
+    const data = await res.json();
+    const text = data.content?.map(b => b.text||"").join("")||"";
+    const m = text.match(/\[[\s\S]*\]/);
+    return JSON.parse(m ? m[0] : text.replace(/```json|```/g,"").trim());
+  } catch(e) { onError(e.message); return null; }
+}
+
+function buildPrompt(prefs, staples, rejected) {
+  return `Generate exactly 10 dinner/lunch dishes for 2 adults + 1 toddler.
+
+PREFERENCES:
+- Primary cuisines: ${prefs.primaryCuisines.join(", ")}
+- Also welcome: ${prefs.cuisines.filter(c=>!prefs.primaryCuisines.includes(c)).join(", ")}
+- Dietary: ${prefs.dietaryNotes}
+- Cooking: ${prefs.cookingStyle}
+- Favorite ingredients: ${prefs.favoriteIngredients.join(", ")}
+- Staples (do NOT repeat): ${staples.map(s=>s.name).join(", ")}
+${rejected.length ? `- Rejected (do NOT repeat): ${rejected.join(", ")}` : ""}
+
+RULES:
+- 6-10 core ingredients per dish with quantities for 2.5 servings (e.g. "1 lb chicken", "1.5 cups rice")
+- Skip pantry basics (salt, pepper, cooking oil)
+- 4-6 concise steps
+- Under 30 min cook time, prioritize Sunday-prep-friendly
+- 6-7 Chinese/Mediterranean, 3-4 from Korean/Japanese/Thai/Mexican/Indian
+- No birch-allergy foods (apples, pears, cherries, peaches, plums, apricots, kiwi, hazelnuts, almonds, walnuts, raw carrots/celery)
+- Low sodium
+- Include a "whyYoullLikeIt" field: 1-2 sentences on what makes it special, flavors/textures, toddler-friendliness
+
+JSON array, each object:
+{"name":"...","description":"One sentence overview","cuisine":"...","prepTime":"X min","cookTime":"Y min","prepFriendly":true/false,"whyYoullLikeIt":"...","ingredients":["..."],"steps":["..."]}`;
+}
+
+// ─── Week helpers ───
+function getMonday(d) { const x=new Date(d); const day=x.getDay(); x.setDate(x.getDate()-day+(day===0?-6:1)); x.setHours(0,0,0,0); return x; }
+function weekKey(m) { return m.toISOString().slice(0,10); }
+function fmtWeek(m) { const s=new Date(m); s.setDate(m.getDate()+6); return `${m.toLocaleDateString("en-US",{month:"short",day:"numeric"})} – ${s.toLocaleDateString("en-US",{month:"short",day:"numeric"})}`; }
+function shiftWeek(m,d) { const x=new Date(m); x.setDate(x.getDate()+7*d); return x; }
+
+// ─── Styles ───
+const C = { bg:"#f5f1eb",card:"#faf8f5",dark:"#3a2f23",med:"#5c4a36",light:"#8b7355",accent:"#b5956b",green:"#6b705c",border:"#e8e0d4",red:"#c1666b",white:"#fff",warm:"#ede6da" };
+const btn = (bg,fg,x={}) => ({background:bg,color:fg,border:"none",borderRadius:8,padding:"8px 16px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",transition:"all .15s",...x});
+const secH = {fontFamily:"'Playfair Display',serif",fontSize:14,color:C.dark,margin:"14px 0 4px",borderBottom:`1px solid ${C.border}`,paddingBottom:4};
+
+// ─── RecipeModal ───
+function RecipeModal({meal,onClose,staples,onPromote}) {
+  if (!meal) return null;
+  const isSt = staples.some(s=>s.name===meal.name);
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(58,47,35,.5)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} style={{background:C.card,borderRadius:18,maxWidth:560,width:"100%",maxHeight:"85vh",overflow:"auto",padding:"24px 28px",position:"relative",boxShadow:"0 20px 60px rgba(58,47,35,.3)"}}>
+        <button onClick={onClose} style={{position:"absolute",top:12,right:16,background:"none",border:"none",fontSize:22,cursor:"pointer",color:C.light}}>×</button>
+        <h2 style={{fontFamily:"'Playfair Display',serif",color:C.dark,fontSize:21,margin:"0 0 4px",paddingRight:28}}>{meal.name}</h2>
+        <p style={{fontSize:13,color:C.light,margin:"0 0 12px"}}>{meal.description}</p>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",fontSize:12,color:C.green,marginBottom:14}}>
+          <span>🍳 {meal.cuisine}</span><span>⏱ Prep {meal.prepTime} · Cook {meal.cookTime}</span>
+          {meal.prepFriendly && <span>📦 Sunday prep</span>}<span>👨‍👩‍👧 {SERVINGS}</span>
+        </div>
+        {meal.whyYoullLikeIt && (
+          <div style={{background:"#f0ebe3",borderRadius:10,padding:"10px 14px",marginBottom:14,fontSize:13,color:C.med,lineHeight:1.6,borderLeft:`3px solid ${C.accent}`}}>
+            💛 <strong>Why you'll like it:</strong> {meal.whyYoullLikeIt}
+          </div>
+        )}
+        <h3 style={secH}>Ingredients</h3>
+        <ul style={{fontSize:13,color:C.dark,paddingLeft:18,lineHeight:2,margin:"4px 0 0"}}>{meal.ingredients?.map((ing,i)=><li key={i}>{ing}</li>)}</ul>
+        <h3 style={secH}>Steps</h3>
+        <ol style={{fontSize:13,color:C.dark,paddingLeft:18,lineHeight:1.8,margin:"4px 0 0"}}>{meal.steps?.map((s,i)=><li key={i} style={{marginBottom:5}}>{s}</li>)}</ol>
+        <div style={{marginTop:16,display:"flex",gap:8,flexWrap:"wrap"}}>
+          <button onClick={()=>{const t=`🍽 ${meal.name} (${SERVINGS})\n\n📝 Ingredients:\n${meal.ingredients.map(i=>`• ${i}`).join("\n")}\n\n👨‍🍳 Steps:\n${meal.steps.map((s,i)=>`${i+1}. ${s}`).join("\n")}`;navigator.clipboard.writeText(t);}} style={btn(C.accent,C.white)}>Copy Recipe 📋</button>
+          {!isSt && <button onClick={()=>onPromote(meal)} style={btn(C.green,C.white)}>⭐ Make Staple</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main App ───
+function App() {
+  const [page, setPage] = useState("plan");
+  const [prefs, setPrefs] = useState(()=>load("mp4-prefs",DEFAULT_PREFS));
+  const [staples, setStaples] = useState(()=>load("mp4-staples",DEFAULT_STAPLES));
+  const [allWeeks, setAllWeeks] = useState(()=>load("mp4-weeks",{}));
+  const [currentMonday, setCurrentMonday] = useState(()=>{const t=new Date();const m=getMonday(t);return t.getDay()===6?shiftWeek(m,1):m;});
+  const [suggestions, setSuggestions] = useState([]);
+  const [rejected, setRejected] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [modal, setModal] = useState(null);
+  const [dragItem, setDragItem] = useState(null);
+  const [dragOver, setDragOver] = useState(null);
+  const [editPrefs, setEditPrefs] = useState(false);
+  const [shopChecked, setShopChecked] = useState({});
+  const [apiKeyVisible, setApiKeyVisible] = useState(false);
+  const [tapSelected, setTapSelected] = useState(null); // { meal, fromSlot } or null
+
+  const wk = weekKey(currentMonday);
+  const weekSlots = allWeeks[wk] || {};
+
+  // Save on change
+  useEffect(()=>save("mp4-staples",staples),[staples]);
+  useEffect(()=>save("mp4-prefs",prefs),[prefs]);
+  useEffect(()=>save("mp4-weeks",allWeeks),[allWeeks]);
+
+  // ── Auto-populate staples on empty weeks ──
+  useEffect(()=>{
+    const existing = allWeeks[wk];
+    if (existing && Object.keys(existing).length > 0) return; // already has meals
+    if (staples.length === 0) return;
+    const newSlots = {};
+    let si = 0;
+    ALL_SLOTS.forEach((slotKey, i) => {
+      if (STAPLE_PATTERN[i] && staples.length > 0) {
+        newSlots[slotKey] = staples[si % staples.length];
+        si++;
+      }
+    });
+    setAllWeeks(prev => ({...prev, [wk]: newSlots}));
+  }, [wk, staples.length]);
+
+  // Slot helpers
+  const setSlot = (sk, meal) => setAllWeeks(p=>({...p,[wk]:{...p[wk],[sk]:meal}}));
+  const clearSlot = (sk) => setAllWeeks(p=>{const w={...(p[wk]||{})};delete w[sk];return{...p,[wk]:w};});
+  const assignedNames = new Set(ALL_SLOTS.map(k=>weekSlots[k]?.name).filter(Boolean));
+  const filledCount = ALL_SLOTS.filter(k=>weekSlots[k]).length;
+
+  // Generate
+  const generate = async () => {
+    setLoading(true); setError(null);
+    const result = await aiGenerate(buildPrompt(prefs,staples,rejected), prefs.apiKey, setError);
+    if (result && Array.isArray(result)) setSuggestions(result.map((m,i)=>({...m,id:"g"+Date.now()+"_"+i})));
+    setLoading(false);
+  };
+
+  // Drag & drop
+  const onDragStart = (e,meal,fromSlot) => { setTapSelected(null); setDragItem({meal,fromSlot}); e.dataTransfer.effectAllowed="move"; try{e.dataTransfer.setData("text/plain",meal.name)}catch{} };
+  const onDragOverSlot = (e,sk) => { e.preventDefault(); setDragOver(sk); };
+  const onDragLeave = () => setDragOver(null);
+  const onDrop = (e,sk) => { e.preventDefault(); setDragOver(null); if(!dragItem)return; if(dragItem.fromSlot) clearSlot(dragItem.fromSlot); setSlot(sk,dragItem.meal); setDragItem(null); };
+  const onDragEnd = () => { setDragItem(null); setDragOver(null); };
+
+  // Tap-to-place (touch-friendly alternative to drag-and-drop)
+  const tapSelectMeal = (meal, fromSlot) => {
+    setTapSelected(prev => (prev && prev.meal.name === meal.name && prev.fromSlot === fromSlot) ? null : { meal, fromSlot });
+  };
+  const tapPlaceInSlot = (sk) => {
+    if (!tapSelected) return;
+    if (tapSelected.fromSlot) clearSlot(tapSelected.fromSlot);
+    setSlot(sk, tapSelected.meal);
+    setTapSelected(null);
+  };
+  const tapCancel = () => setTapSelected(null);
+
+  // Shopping list
+  const getShopList = () => {
+    const map={},seen={};
+    Object.values(weekSlots).forEach(meal=>{
+      if(!meal?.ingredients) return;
+      meal.ingredients.forEach(ing=>{
+        const norm=ing.toLowerCase().replace(/[½¼¾⅓⅔⅛]+/g,"").trim();
+        const nm=norm.match(/(?:[\d.]+\s*(?:lb|lbs|oz|cups?|tbsp|tsp|inch|cloves?|medium|large|small|bunch)?\s*(?:of\s)?)?(.+)/);
+        const base=nm?nm[1].replace(/,.*$/,"").trim().replace(/\s+/g," "):norm;
+        const mk=`${meal.name}::${base}`;
+        if(seen[mk])return; seen[mk]=true;
+        if(!map[base]) map[base]={display:ing,meals:[],key:base};
+        if(!map[base].meals.includes(meal.name)) map[base].meals.push(meal.name);
+      });
+    });
+    return Object.values(map).sort((a,b)=>a.key.localeCompare(b.key));
+  };
+
+  const promoteToStaple = (meal) => { if(staples.find(s=>s.name===meal.name)) return; setStaples(p=>[...p,{...meal,id:"s"+Date.now()}]); };
+
+  // PDF export
+  const exportPDF = () => {
+    const rows = ALL_SLOTS.map(k=>{const meal=weekSlots[k]; if(!meal) return `<tr style="border-bottom:1px solid #e8e0d4"><td style="padding:8px 12px;color:#a08b6f;width:100px">${k.replace("-"," · ").toUpperCase()}</td><td style="padding:8px 12px;color:#ccc;font-style:italic">—</td></tr>`; const isSt=staples.some(s=>s.name===meal.name); return `<tr style="border-bottom:1px solid #e8e0d4"><td style="padding:8px 12px;font-weight:700;color:#3a2f23;width:100px">${k.replace("-"," · ").toUpperCase()}</td><td style="padding:8px 12px"><strong>${isSt?'⭐':'✨'} ${meal.name}</strong><br><span style="font-size:11px;color:#8b7355">${meal.cuisine} · Cook ${meal.cookTime}${meal.prepFriendly?' · 📦':''}</span></td></tr>`;}).join("");
+    const recipes=[...new Map(ALL_SLOTS.map(k=>weekSlots[k]).filter(Boolean).map(m=>[m.name,m])).values()];
+    const recipeHTML=recipes.map(m=>`<div style="break-inside:avoid;border:1.5px solid #e8e0d4;border-radius:10px;padding:16px 20px;margin-bottom:14px;background:#faf8f5"><div style="border-left:4px solid #b5956b;padding-left:12px;margin-bottom:10px"><strong style="font-size:16px">${m.name}</strong><br><span style="font-size:11px;color:#6b705c">${m.cuisine} · Prep ${m.prepTime} · Cook ${m.cookTime} · ${SERVINGS}</span></div><div style="display:flex;gap:20px"><div style="flex:1"><strong style="font-size:12px">Ingredients</strong><ul style="font-size:11px;padding-left:16px;line-height:1.8;margin:4px 0 0">${m.ingredients.map(i=>`<li>${i}</li>`).join("")}</ul></div><div style="flex:1.2"><strong style="font-size:12px">Steps</strong><ol style="font-size:11px;padding-left:16px;line-height:1.7;margin:4px 0 0">${m.steps.map(s=>`<li style="margin-bottom:3px">${s}</li>`).join("")}</ol></div></div></div>`).join("");
+    const shopItems=getShopList();
+    const shopRows=shopItems.map(i=>`<tr style="border-bottom:1px solid #e8e0d4"><td style="padding:5px 10px;width:24px">☐</td><td style="padding:5px 10px;font-size:13px">${i.display}</td></tr>`).join("");
+    const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Meal Plan – ${fmtWeek(currentMonday)}</title><style>@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@400;600;700&display=swap');*{box-sizing:border-box;margin:0;padding:0}body{font-family:'DM Sans',sans-serif;color:#3a2f23}@media print{body{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}.pb{break-before:page}}@page{margin:.5in}</style></head><body><div style="background:linear-gradient(135deg,#3a2f23,#5c4a36);padding:22px 26px;border-radius:10px;margin-bottom:18px"><div style="font-family:'Playfair Display',serif;font-size:24px;font-weight:700;color:#faf8f5">Keil Meal Planning</div><div style="font-size:12px;color:#c9b99a;margin-top:3px">${fmtWeek(currentMonday)} · ${SERVINGS}</div></div><table style="width:100%;border-collapse:collapse;border:1.5px solid #e8e0d4;margin-bottom:24px"><thead><tr style="background:#b5956b"><th style="padding:8px 12px;text-align:left;color:#fff;font-size:12px">SLOT</th><th style="padding:8px 12px;text-align:left;color:#fff;font-size:12px">MEAL</th></tr></thead><tbody>${rows}</tbody></table><div class="pb"></div><div style="background:linear-gradient(135deg,#3a2f23,#5c4a36);padding:16px 22px;border-radius:10px;margin-bottom:14px"><div style="font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:#faf8f5">🛒 Shopping List · ${shopItems.length} items</div></div><table style="width:100%;border-collapse:collapse;border:1.5px solid #e8e0d4;margin-bottom:24px"><tbody>${shopRows}</tbody></table><div class="pb"></div><div style="background:linear-gradient(135deg,#3a2f23,#5c4a36);padding:16px 22px;border-radius:10px;margin-bottom:14px"><div style="font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:#faf8f5">📖 Recipes</div></div>${recipeHTML}</body></html>`;
+    const blob=new Blob([html],{type:"text/html"});const url=URL.createObjectURL(blob);const w=window.open(url,"_blank");if(w) w.onload=()=>setTimeout(()=>w.print(),400);
+  };
+
+  // ─── RENDER ───
+  return (
+    <div style={{minHeight:"100vh",background:C.bg}}>
+      {/* Top bar */}
+      <div style={{background:`linear-gradient(135deg,${C.dark},${C.med})`,padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+        <h1 style={{fontFamily:"'Playfair Display',serif",fontSize:20,fontWeight:800,color:C.card,margin:0,whiteSpace:"nowrap"}}>Keil Meal Planning</h1>
+        <div style={{display:"flex",gap:6}}>
+          {[{id:"plan",l:"📅 Plan"},{id:"manage",l:"🛒 Shop & Manage"}].map(t=>(
+            <button key={t.id} onClick={()=>setPage(t.id)} style={{background:page===t.id?C.accent:"rgba(255,255,255,.12)",color:C.white,border:"none",borderRadius:8,padding:"7px 12px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>{t.l}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Tap-to-place banner */}
+      {tapSelected && (
+        <div className="tap-banner">
+          <span>Placing: <strong>{tapSelected.meal.name}</strong></span>
+          <button onClick={tapCancel} style={btn("rgba(255,255,255,.2)",C.white,{padding:"5px 14px",fontSize:12,borderRadius:6})}>Cancel</button>
+        </div>
+      )}
+
+      {/* ═══ PLAN PAGE ═══ */}
+      {page === "plan" && (
+        <div style={{paddingBottom:40}}>
+          {/* Week nav */}
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:14,padding:"14px 16px",background:C.card,borderBottom:`1px solid ${C.border}`}}>
+            <button onClick={()=>setCurrentMonday(shiftWeek(currentMonday,-1))} style={btn("transparent",C.dark,{fontSize:18,padding:"4px 10px",border:`1.5px solid ${C.border}`,borderRadius:8})}>‹</button>
+            <div style={{textAlign:"center"}}>
+              <div style={{fontFamily:"'Playfair Display',serif",fontSize:17,fontWeight:700,color:C.dark}}>{fmtWeek(currentMonday)}</div>
+              <div style={{fontSize:12,color:C.light,marginTop:1}}>{filledCount}/9 meals planned</div>
+            </div>
+            <button onClick={()=>setCurrentMonday(shiftWeek(currentMonday,1))} style={btn("transparent",C.dark,{fontSize:18,padding:"4px 10px",border:`1.5px solid ${C.border}`,borderRadius:8})}>›</button>
+          </div>
+
+          {/* Week strip */}
+          <div style={{overflowX:"auto",padding:"14px 10px 6px",background:`linear-gradient(180deg,${C.card} 0%,${C.bg} 100%)`}}>
+            <div style={{display:"flex",gap:7,minWidth:"fit-content"}}>
+              {DAYS.map((day,di)=>{
+                const isWE = day==="Sat"||day==="Sun";
+                const dt = new Date(currentMonday); dt.setDate(currentMonday.getDate()+di);
+                return (
+                  <div key={day} style={{minWidth:128,width:128,flexShrink:0,background:isWE?C.warm:C.card,border:`1.5px solid ${C.border}`,borderRadius:12,padding:"10px 8px 8px"}}>
+                    <div style={{textAlign:"center",marginBottom:8}}>
+                      <div style={{fontSize:11,fontWeight:700,color:C.light,textTransform:"uppercase",letterSpacing:.5}}>{day}</div>
+                      <div style={{fontSize:10,color:C.light}}>{dt.toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>
+                    </div>
+                    {SLOT_MAP[day].map(type=>{
+                      const sk=`${day}-${type}`;const meal=weekSlots[sk];const isOver=dragOver===sk;
+                      const isTargetable=tapSelected&&!meal;
+                      const isTapSel=tapSelected&&meal&&tapSelected.meal.name===meal.name&&tapSelected.fromSlot===sk;
+                      return (
+                        <div key={sk} className={`slot-drop ${isOver?'over':''} ${isTargetable?'slot-targetable':''} ${isTapSel?'tap-selected':''}`}
+                          onDragOver={e=>onDragOverSlot(e,sk)} onDragLeave={onDragLeave} onDrop={e=>onDrop(e,sk)}
+                          onClick={()=>{ if(tapSelected&&!meal){tapPlaceInSlot(sk);} }}
+                          style={{minHeight:58,borderRadius:8,marginBottom:5,border:`1.5px ${meal?'solid':'dashed'} ${isOver||isTargetable?C.accent:C.border}`,background:meal?C.card:"transparent",padding:meal?"6px 8px":"6px",cursor:isTargetable?"pointer":"default"}}>
+                          {SLOT_MAP[day].length>1 && <div style={{fontSize:9,fontWeight:700,color:type==="lunch"?C.accent:C.green,textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>{type}</div>}
+                          {meal ? (
+                            <div draggable onDragStart={e=>onDragStart(e,meal,sk)} onDragEnd={onDragEnd}
+                              onClick={(e)=>{ if(e.target.closest('button')) return; tapSelectMeal(meal,sk); }}
+                              style={{cursor:"grab"}}>
+                              <div style={{fontSize:12,fontWeight:700,color:C.dark,lineHeight:1.3}}>{meal.name}</div>
+                              <div style={{fontSize:10,color:C.light,marginTop:1}}>{meal.cuisine} · {meal.cookTime}</div>
+                              <div style={{display:"flex",gap:3,marginTop:3}}>
+                                <button onClick={()=>setModal(meal)} style={btn(C.green,C.white,{padding:"2px 6px",fontSize:9,borderRadius:4})}>View</button>
+                                <button onClick={()=>clearSlot(sk)} style={btn("transparent",C.red,{padding:"2px 6px",fontSize:9,borderRadius:4,border:`1px solid ${C.red}`})}>×</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div style={{fontSize:11,color:isTargetable?C.accent:"#c9b99a",textAlign:"center",padding:"8px 0",fontWeight:isTargetable?600:400}}>{isTargetable?"Tap to place":"Drop here"}</div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Action bar */}
+          <div style={{display:"flex",gap:8,padding:"10px 14px",flexWrap:"wrap",alignItems:"center"}}>
+            <button onClick={generate} disabled={loading} style={btn(C.accent,C.white,{padding:"10px 18px",borderRadius:10,opacity:loading?.6:1})}>
+              {loading ? <><span className="spinner" style={{marginRight:8}}/>Generating…</> : "✨ Generate 10 Ideas"}
+            </button>
+            {filledCount>0 && <button onClick={exportPDF} style={btn(C.dark,C.white,{padding:"10px 16px",borderRadius:10})}>📄 Export PDF</button>}
+            {filledCount>0 && <button onClick={()=>{setAllWeeks(p=>({...p,[wk]:{}}));}} style={btn("transparent",C.red,{padding:"10px 16px",borderRadius:10,border:`1.5px solid ${C.red}`})}>Clear Week</button>}
+          </div>
+
+          {error && (
+            <div style={{margin:"0 14px",background:"#fdf0ef",border:"1.5px solid #e8a9a5",borderRadius:10,padding:"10px 14px",color:"#8b3a35",fontSize:13,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+              <span>⚠️ {error}</span>
+              <button onClick={()=>{setError(null);generate();}} style={btn(C.red,C.white,{padding:"5px 12px",fontSize:11,flexShrink:0})}>Retry</button>
+            </div>
+          )}
+
+          {/* Suggestions */}
+          {suggestions.length > 0 && (
+            <div style={{padding:"8px 14px 0"}}>
+              <div style={{fontSize:14,fontWeight:700,color:C.dark,marginBottom:10,fontFamily:"'Playfair Display',serif"}}>
+                New Ideas — tap a meal, then tap a slot to place it
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:10}}>
+                {suggestions.filter(s=>!assignedNames.has(s.name)).map(meal=>{
+                  const isSel=tapSelected&&tapSelected.meal.name===meal.name&&!tapSelected.fromSlot;
+                  return (
+                  <div key={meal.id} className={`scard ${isSel?'tap-selected':''}`} draggable onDragStart={e=>onDragStart(e,meal,null)} onDragEnd={onDragEnd}
+                    onClick={(e)=>{ if(e.target.closest('button')) return; tapSelectMeal(meal,null); }}
+                    style={{background:C.card,border:`1.5px solid ${isSel?C.accent:C.border}`,borderRadius:12,padding:"14px 16px"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:15,fontWeight:700,color:C.dark,marginBottom:3,fontFamily:"'Playfair Display',serif"}}>{meal.name}</div>
+                        <div style={{fontSize:12,color:C.light,marginBottom:6,lineHeight:1.5}}>{meal.description}</div>
+                      </div>
+                      <button onClick={e=>{e.stopPropagation();setModal(meal);}} style={btn(C.green,C.white,{padding:"5px 10px",fontSize:11,flexShrink:0})}>Recipe</button>
+                    </div>
+                    {meal.whyYoullLikeIt && (
+                      <div style={{fontSize:12,color:C.med,lineHeight:1.5,marginBottom:8,background:"#f5f0e8",borderRadius:8,padding:"8px 10px",borderLeft:`3px solid ${C.accent}`}}>
+                        💛 {meal.whyYoullLikeIt}
+                      </div>
+                    )}
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap",fontSize:11,color:C.light}}>
+                      <span>🍳 {meal.cuisine}</span><span>🔥 {meal.cookTime}</span>
+                      {meal.prepFriendly && <span>📦 Prep-friendly</span>}
+                      <span style={{marginLeft:"auto",color:C.accent,fontWeight:600,fontSize:10}}>TAP to select →</span>
+                    </div>
+                  </div>
+                  );
+                })}
+              </div>
+              {suggestions.filter(s=>!assignedNames.has(s.name)).length===0 && (
+                <div style={{textAlign:"center",padding:20,color:C.light,fontSize:14}}>All ideas assigned! Generate more if needed.</div>
+              )}
+            </div>
+          )}
+
+          {/* Empty state */}
+          {suggestions.length===0 && filledCount===0 && !loading && (
+            <div style={{textAlign:"center",padding:"40px 20px",color:C.light}}>
+              <div style={{fontSize:36,marginBottom:10}}>🍳</div>
+              <div style={{fontFamily:"'Playfair Display',serif",fontSize:18,color:C.dark,marginBottom:6}}>Plan your week</div>
+              <div style={{fontSize:14,maxWidth:360,margin:"0 auto",lineHeight:1.6}}>
+                Staples auto-fill when you navigate to a new week. Hit <strong>Generate 10 Ideas</strong> to discover new dishes and drag them on!
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ═══ SHOP & MANAGE ═══ */}
+      {page === "manage" && (
+        <div style={{padding:"20px 20px 40px",maxWidth:640,margin:"0 auto"}}>
+          {/* Shopping */}
+          <h2 style={{fontFamily:"'Playfair Display',serif",color:C.dark,fontSize:22,margin:"0 0 4px"}}>🛒 Shopping List</h2>
+          <p style={{color:C.light,fontSize:13,margin:"0 0 14px"}}>{filledCount>0?`${fmtWeek(currentMonday)} · ${getShopList().length} items`:"Fill your meal plan first"}</p>
+          {filledCount>0 ? (()=>{
+            const items=getShopList(); const ck=Object.keys(shopChecked).filter(k=>shopChecked[k]).length;
+            return (
+              <div style={{marginBottom:28}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                  <span style={{fontSize:14,fontWeight:600,color:C.dark}}>{ck}/{items.length} checked</span>
+                  <button onClick={()=>navigator.clipboard.writeText(`🛒 Shopping – ${fmtWeek(currentMonday)}\n\n${items.map(v=>`☐ ${v.display}`).join("\n")}`)} style={btn(C.accent,C.white,{padding:"6px 12px",fontSize:12})}>Copy 📋</button>
+                </div>
+                {items.map(item=>(
+                  <div key={item.key} onClick={()=>setShopChecked(p=>({...p,[item.key]:!p[item.key]}))} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,background:shopChecked[item.key]?C.warm:C.card,border:`1px solid ${C.border}`,marginBottom:4,cursor:"pointer",opacity:shopChecked[item.key]?.5:1,transition:"all .15s"}}>
+                    <div style={{width:20,height:20,borderRadius:5,flexShrink:0,border:shopChecked[item.key]?"none":`2px solid #c9b99a`,background:shopChecked[item.key]?C.accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center",color:C.white,fontSize:12,fontWeight:700}}>{shopChecked[item.key]&&"✓"}</div>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:13,fontWeight:600,color:C.dark,textDecoration:shopChecked[item.key]?"line-through":"none"}}>{item.display}</div>
+                      {item.meals.length>1 && <div style={{fontSize:10,color:C.light}}>used in {item.meals.length} dishes</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })() : <div style={{background:C.card,borderRadius:14,padding:24,textAlign:"center",border:`1.5px dashed ${C.border}`,color:C.light,fontSize:14,marginBottom:28}}>Assign meals to your week first.</div>}
+
+          {/* Staples */}
+          <h2 style={{fontFamily:"'Playfair Display',serif",color:C.dark,fontSize:22,margin:"0 0 4px"}}>⭐ Staples ({staples.length})</h2>
+          <p style={{color:C.light,fontSize:13,margin:"0 0 12px"}}>These auto-fill each new week. Goal: ~4 staples + 3 new.</p>
+          {staples.map(meal=>(
+            <div key={meal.id} style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:10,padding:"10px 14px",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:14,fontWeight:700,color:C.dark}}>{meal.name}</div>
+                <div style={{fontSize:12,color:C.light}}>{meal.cuisine} · {meal.cookTime}</div>
+              </div>
+              <div style={{display:"flex",gap:4,flexShrink:0}}>
+                <button onClick={()=>setModal(meal)} style={btn(C.green,C.white,{padding:"4px 8px",fontSize:11})}>Recipe</button>
+                <button onClick={()=>setStaples(p=>p.filter(s=>s.id!==meal.id))} style={btn("transparent",C.red,{padding:"4px 8px",fontSize:11,border:`1px solid ${C.red}`})}>×</button>
+              </div>
+            </div>
+          ))}
+
+          {/* Prefs */}
+          <h2 style={{fontFamily:"'Playfair Display',serif",color:C.dark,fontSize:22,margin:"24px 0 4px"}}>⚙️ Preferences</h2>
+          <p style={{color:C.light,fontSize:13,margin:"0 0 12px"}}>Guides AI suggestions. Add your API key to enable generation.</p>
+          {!editPrefs ? (
+            <div style={{background:C.card,borderRadius:14,padding:18,border:`1.5px solid ${C.border}`}}>
+              {/* API Key */}
+              <div style={{marginBottom:14,background:"#f0ebe3",borderRadius:10,padding:"10px 14px",border:`1.5px solid ${C.border}`}}>
+                <div style={{fontSize:10,fontWeight:700,color:C.light,textTransform:"uppercase",letterSpacing:.5,marginBottom:4}}>Anthropic API Key</div>
+                {prefs.apiKey ? (
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:13,color:C.green,fontWeight:600}}>✓ Key saved</span>
+                    <span style={{fontSize:12,color:C.light}}>(sk-...{prefs.apiKey.slice(-4)})</span>
+                  </div>
+                ) : (
+                  <div style={{fontSize:13,color:C.red}}>No key set — add one to enable AI dish generation</div>
+                )}
+              </div>
+              {[
+                {l:"Primary Cuisines",v:prefs.primaryCuisines.join(", ")},
+                {l:"Also Welcome",v:prefs.cuisines.filter(c=>!prefs.primaryCuisines.includes(c)).join(", ")},
+                {l:"Dietary / Allergies",v:prefs.dietaryNotes},
+                {l:"Cooking Style",v:prefs.cookingStyle},
+              ].map((f,i)=>(
+                <div key={i} style={{marginBottom:12}}>
+                  <div style={{fontSize:10,fontWeight:700,color:C.light,textTransform:"uppercase",letterSpacing:.5,marginBottom:2}}>{f.l}</div>
+                  <div style={{fontSize:13,color:C.dark,lineHeight:1.5}}>{f.v}</div>
+                </div>
+              ))}
+              <div style={{marginBottom:12}}>
+                <div style={{fontSize:10,fontWeight:700,color:C.light,textTransform:"uppercase",letterSpacing:.5,marginBottom:5}}>Favorite Ingredients</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                  {prefs.favoriteIngredients.map((ing,i)=><span key={i} style={{background:C.warm,color:C.green,fontSize:11,padding:"2px 8px",borderRadius:12}}>{ing}</span>)}
+                </div>
+              </div>
+              <button onClick={()=>setEditPrefs(true)} style={btn(C.accent,C.white,{marginTop:4})}>Edit ✏️</button>
+            </div>
+          ) : (
+            <div style={{background:C.card,borderRadius:14,padding:18,border:`1.5px solid ${C.border}`}}>
+              {/* API Key input */}
+              <div style={{marginBottom:14}}>
+                <label style={{fontSize:10,fontWeight:700,color:C.light,textTransform:"uppercase",display:"block",marginBottom:4}}>Anthropic API Key</label>
+                <div style={{display:"flex",gap:6}}>
+                  <input type={apiKeyVisible?"text":"password"} value={prefs.apiKey||""} onChange={e=>setPrefs(p=>({...p,apiKey:e.target.value.trim()}))} placeholder="sk-ant-..." style={{flex:1,padding:"8px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontSize:13,fontFamily:"monospace"}} />
+                  <button onClick={()=>setApiKeyVisible(!apiKeyVisible)} style={btn("transparent",C.light,{border:`1.5px solid ${C.border}`,padding:"6px 10px",fontSize:12})}>{apiKeyVisible?"Hide":"Show"}</button>
+                </div>
+                <div style={{fontSize:11,color:C.light,marginTop:4}}>Get one at <a href="https://console.anthropic.com/settings/keys" target="_blank" style={{color:C.accent}}>console.anthropic.com</a>. Stored locally in your browser only.</div>
+              </div>
+              {[
+                {l:"Primary Cuisines",k:"primaryCuisines",t:"arr"},
+                {l:"Other Cuisines",k:"_other",t:"special"},
+                {l:"Dietary Notes",k:"dietaryNotes",t:"text"},
+                {l:"Cooking Style",k:"cookingStyle",t:"text"},
+                {l:"Favorite Ingredients",k:"favoriteIngredients",t:"arr"},
+              ].map(f=>(
+                <div key={f.k} style={{marginBottom:12}}>
+                  <label style={{fontSize:10,fontWeight:700,color:C.light,textTransform:"uppercase",display:"block",marginBottom:4}}>{f.l}</label>
+                  {f.t==="text" ? <textarea value={prefs[f.k]||""} onChange={e=>setPrefs(p=>({...p,[f.k]:e.target.value}))} rows={2} style={{width:"100%",padding:"8px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontSize:13,fontFamily:"'DM Sans',sans-serif",resize:"vertical"}} />
+                  : f.t==="arr" ? <input value={(prefs[f.k]||[]).join(", ")} onChange={e=>setPrefs(p=>({...p,[f.k]:e.target.value.split(",").map(s=>s.trim()).filter(Boolean)}))} style={{width:"100%",padding:"8px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontSize:13}} />
+                  : <input value={prefs.cuisines.filter(c=>!prefs.primaryCuisines.includes(c)).join(", ")} onChange={e=>{const o=e.target.value.split(",").map(s=>s.trim()).filter(Boolean);setPrefs(p=>({...p,cuisines:[...p.primaryCuisines,...o]}));}} style={{width:"100%",padding:"8px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontSize:13}} />}
+                </div>
+              ))}
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>setEditPrefs(false)} style={btn(C.green,C.white)}>Save ✓</button>
+                <button onClick={()=>setEditPrefs(false)} style={btn("transparent",C.light,{border:`1.5px solid ${C.border}`})}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          <div style={{background:C.card,borderRadius:12,padding:14,border:`1.5px solid ${C.border}`,marginTop:18}}>
+            <div style={{fontFamily:"'Playfair Display',serif",fontSize:14,color:C.dark,marginBottom:4}}>🌳 Birch Allergy Reference</div>
+            <div style={{fontSize:12,color:C.green,lineHeight:1.7}}>
+              <strong>Fruits:</strong> Apples, pears, cherries, peaches, plums, apricots, kiwi · <strong>Nuts:</strong> Hazelnuts, almonds, walnuts · <strong>Veggies (raw):</strong> Carrots, celery
+            </div>
+          </div>
+        </div>
+      )}
+
+      <RecipeModal meal={modal} onClose={()=>setModal(null)} staples={staples} onPromote={promoteToStaple} />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>
