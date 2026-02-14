@@ -317,12 +317,13 @@ function App() {
       if(!meal?.ingredients) return;
       meal.ingredients.forEach(ing=>{
         const norm=ing.toLowerCase().replace(/[½¼¾⅓⅔⅛]+/g,"").trim();
-        const nm=norm.match(/(?:[\d.]+\s*(?:lb|lbs|oz|cups?|tbsp|tsp|inch|cloves?|medium|large|small|bunch)?\s*(?:of\s)?)?(.+)/);
-        const base=nm?nm[1].replace(/,.*$/,"").trim().replace(/\s+/g," "):norm;
+        const nm=norm.match(/^([\d./½¼¾⅓⅔⅛]+\s*(?:lb|lbs|oz|cups?|tbsp|tsp|inch|inches|cloves?|medium|large|small|bunch|cans?|can|pkg|package)?\s*(?:of\s)?)?(.+)/i);
+        const base=nm&&nm[2]?nm[2].replace(/,.*$/,"").trim().replace(/\s+/g," "):norm;
+        const qty=nm&&nm[1]?nm[1].trim():"";
         const mk=`${meal.name}::${base}`;
         if(seen[mk])return; seen[mk]=true;
-        if(!map[base]) map[base]={display:ing,meals:[],key:base};
-        if(!map[base].meals.includes(meal.name)) map[base].meals.push(meal.name);
+        if(!map[base]) map[base]={name:base.replace(/\b\w/g,c=>c.toUpperCase()),quantities:[],key:base};
+        if(qty && !map[base].quantities.includes(qty)) map[base].quantities.push(qty);
       });
     });
     // Group by store section
@@ -348,7 +349,7 @@ function App() {
     const recipeHTML=recipes.map(m=>`<div style="break-inside:avoid;border:1.5px solid #e8e0d4;border-radius:10px;padding:16px 20px;margin-bottom:14px;background:#faf8f5"><div style="border-left:4px solid #b5956b;padding-left:12px;margin-bottom:10px"><strong style="font-size:16px">${m.name}</strong><br><span style="font-size:11px;color:#6b705c">${m.cuisine} · Prep ${m.prepTime} · Cook ${m.cookTime} · ${SERVINGS}</span></div><div style="display:flex;gap:20px"><div style="flex:1"><strong style="font-size:12px">Ingredients</strong><ul style="font-size:11px;padding-left:16px;line-height:1.8;margin:4px 0 0">${m.ingredients.map(i=>`<li>${i}</li>`).join("")}</ul></div><div style="flex:1.2"><strong style="font-size:12px">Steps</strong><ol style="font-size:11px;padding-left:16px;line-height:1.7;margin:4px 0 0">${m.steps.map(s=>`<li style="margin-bottom:3px">${s}</li>`).join("")}</ol></div></div></div>`).join("");
     const shopGroups=getShopList();
     const shopTotal=shopGroups.reduce((n,g)=>n+g.items.length,0);
-    const shopRows=shopGroups.map(g=>`<tr style="background:#f0ebe3"><td colspan="2" style="padding:8px 12px;font-weight:700;font-size:12px;color:#5c4a36;text-transform:uppercase;letter-spacing:.5px">${g.section}</td></tr>${g.items.map(i=>`<tr style="border-bottom:1px solid #e8e0d4"><td style="padding:5px 10px;width:24px">☐</td><td style="padding:5px 10px;font-size:13px">${i.display}</td></tr>`).join("")}`).join("");
+    const shopRows=shopGroups.map(g=>`<tr style="background:#f0ebe3"><td colspan="2" style="padding:8px 12px;font-weight:700;font-size:12px;color:#5c4a36;text-transform:uppercase;letter-spacing:.5px">${g.section}</td></tr>${g.items.map(i=>`<tr style="border-bottom:1px solid #e8e0d4"><td style="padding:5px 10px;width:24px">☐</td><td style="padding:5px 10px;font-size:13px">${i.name}${i.quantities.length?` <span style="color:#8b7355;font-size:11px">(${i.quantities.join(" + ")})</span>`:""}</td></tr>`).join("")}`).join("");
     const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Meal Plan – ${fmtWeek(currentMonday)}</title><style>@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@400;600;700&display=swap');*{box-sizing:border-box;margin:0;padding:0}body{font-family:'DM Sans',sans-serif;color:#3a2f23}@media print{body{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}.pb{break-before:page}}@page{margin:.5in}</style></head><body><div style="background:linear-gradient(135deg,#3a2f23,#5c4a36);padding:22px 26px;border-radius:10px;margin-bottom:18px"><div style="font-family:'Playfair Display',serif;font-size:24px;font-weight:700;color:#faf8f5">Keil Meal Planning</div><div style="font-size:12px;color:#c9b99a;margin-top:3px">${fmtWeek(currentMonday)} · ${SERVINGS}</div></div><table style="width:100%;border-collapse:collapse;border:1.5px solid #e8e0d4;margin-bottom:24px"><thead><tr style="background:#b5956b"><th style="padding:8px 12px;text-align:left;color:#fff;font-size:12px">SLOT</th><th style="padding:8px 12px;text-align:left;color:#fff;font-size:12px">MEAL</th></tr></thead><tbody>${rows}</tbody></table><div class="pb"></div><div style="background:linear-gradient(135deg,#3a2f23,#5c4a36);padding:16px 22px;border-radius:10px;margin-bottom:14px"><div style="font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:#faf8f5">🛒 Shopping List · ${shopTotal} items</div></div><table style="width:100%;border-collapse:collapse;border:1.5px solid #e8e0d4;margin-bottom:24px"><tbody>${shopRows}</tbody></table><div class="pb"></div><div style="background:linear-gradient(135deg,#3a2f23,#5c4a36);padding:16px 22px;border-radius:10px;margin-bottom:14px"><div style="font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:#faf8f5">📖 Recipes</div></div>${recipeHTML}</body></html>`;
     const blob=new Blob([html],{type:"text/html"});const url=URL.createObjectURL(blob);const w=window.open(url,"_blank");if(w) w.onload=()=>setTimeout(()=>w.print(),400);
   };
@@ -531,7 +532,7 @@ function App() {
 
       {/* ═══ SHOP & MANAGE ═══ */}
       {page === "manage" && (
-        <div style={{padding:"20px 20px 40px",maxWidth:640,margin:"0 auto"}}>
+        <div style={{padding:"20px 20px 40px",margin:"0 auto"}}>
           {/* Shopping */}
           <h2 style={{fontFamily:"'Playfair Display',serif",color:C.dark,fontSize:22,margin:"0 0 4px"}}>🛒 Shopping List</h2>
           <p style={{color:C.light,fontSize:13,margin:"0 0 14px"}}>{filledCount>0?`${fmtWeek(currentMonday)} · ${getShopList().reduce((n,g)=>n+g.items.length,0)} items`:"Fill your meal plan first"}</p>
@@ -540,21 +541,23 @@ function App() {
             return (
               <div style={{marginBottom:28}}>
                 <div style={{display:"flex",justifyContent:"flex-end",marginBottom:10}}>
-                  <button onClick={()=>navigator.clipboard.writeText(`🛒 Shopping – ${fmtWeek(currentMonday)}\n\n${groups.map(g=>`${g.section}\n${g.items.map(v=>`  • ${v.display}`).join("\n")}`).join("\n\n")}`)} style={btn(C.accent,C.white,{padding:"6px 12px",fontSize:12})}>Copy 📋</button>
+                  <button onClick={()=>navigator.clipboard.writeText(`🛒 Shopping – ${fmtWeek(currentMonday)}\n\n${groups.map(g=>`${g.section}\n${g.items.map(v=>`  • ${v.name}${v.quantities.length?` (${v.quantities.join(" + ")})`:""}`).join("\n")}`).join("\n\n")}`)} style={btn(C.accent,C.white,{padding:"6px 12px",fontSize:12})}>Copy 📋</button>
                 </div>
+                <div style={{columns:"3 200px",columnGap:20}}>
                 {groups.map(g=>(
-                  <div key={g.section} style={{marginBottom:14}}>
+                  <div key={g.section} style={{breakInside:"avoid",marginBottom:14}}>
                     <div style={{fontSize:12,fontWeight:700,color:C.light,textTransform:"uppercase",letterSpacing:.5,marginBottom:6,paddingBottom:4,borderBottom:`1px solid ${C.border}`}}>{g.section}</div>
                     <div style={{paddingLeft:4}}>
                       {g.items.map(item=>(
-                        <div key={item.key} style={{fontSize:13,color:C.dark,padding:"3px 0",lineHeight:1.5}}>
-                          {item.display}
-                          {item.meals.length>1 && <span style={{fontSize:10,color:C.light,marginLeft:6}}>({item.meals.length} dishes)</span>}
+                        <div key={item.key} style={{fontSize:13,color:C.dark,padding:"3px 0",lineHeight:1.5,display:"flex",justifyContent:"space-between",gap:8}}>
+                          <span>{item.name}</span>
+                          {item.quantities.length>0 && <span style={{fontSize:11,color:C.light,whiteSpace:"nowrap"}}>{item.quantities.join(" + ")}</span>}
                         </div>
                       ))}
                     </div>
                   </div>
                 ))}
+                </div>
               </div>
             );
           })() : <div style={{background:C.card,borderRadius:14,padding:24,textAlign:"center",border:`1.5px dashed ${C.border}`,color:C.light,fontSize:14,marginBottom:28}}>Assign meals to your week first.</div>}
