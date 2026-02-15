@@ -29,7 +29,7 @@
     @keyframes pulse-border { 0%,100%{border-color:#8b6f47;box-shadow:0 0 0 0 rgba(139,111,71,.3)} 50%{border-color:#a8895e;box-shadow:0 0 0 6px rgba(139,111,71,0)} }
     .slot-targetable { animation: pulse-border 1.5s ease-in-out infinite; cursor: pointer !important; }
     .tap-selected { border-color: #8b6f47 !important; box-shadow: 0 0 0 3px rgba(139,111,71,.35) !important; }
-    .tap-banner { position:sticky;top:0;z-index:100;background:linear-gradient(135deg,#1a332a,#2d5741);color:#f2f5f3;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:14px;font-weight:600 }
+    .tap-banner { position:fixed;bottom:0;left:0;right:0;z-index:100;background:linear-gradient(135deg,#1a332a,#2d5741);color:#f2f5f3;padding:10px 16px;padding-bottom:calc(10px + env(safe-area-inset-bottom));display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:14px;font-weight:600 }
     .slot-past { opacity:.55; pointer-events:auto; }
     .slot-past .slot-drop { cursor:default !important; }
   </style>
