@@ -241,7 +241,20 @@ function App() {
   const [page, setPage] = useState("plan");
   const [prefs, setPrefs] = useState(()=>load("mp4-prefs",DEFAULT_PREFS));
   const [staples, setStaples] = useState(()=>load("mp4-staples",DEFAULT_STAPLES));
-  const [pantry, setPantry] = useState(()=>load("mp4-pantry",["salt","pepper","olive oil","butter","rice","bread","sugar","flour","garlic powder","onion powder","paprika","cumin"]));
+  const [pantry, setPantry] = useState(()=>{
+    const saved = load("mp4-pantry",null);
+    // Migrate flat array → sectioned format
+    if (Array.isArray(saved)) return {"Uncategorized":saved};
+    if (saved) return saved;
+    return {
+      "Proteins":["chicken","beef","bacon","sausage"],
+      "Grains & Bread":["rice","pasta","bread","tortillas","pancake mix","bagels","wheat thins"],
+      "Canned & Dry":["beans","tomato soup","peanut butter","strawberry jelly"],
+      "Dairy & Fridge":["milk","cheese","butter","cream cheese","strawberry chobani yogurt"],
+      "Frozen":["frozen strawberries","frozen mixed veggies"],
+      "Spices & Basics":["salt","pepper","olive oil","sugar","flour","garlic powder","onion powder","paprika","cumin","oregano","chili flake","soy sauce","sesame oil","vinegar","honey"],
+    };
+  });
   const [allWeeks, setAllWeeks] = useState(()=>load("mp4-weeks",{}));
   const [currentMonday, setCurrentMonday] = useState(()=>{const t=new Date();const m=getMonday(t);return t.getDay()===6?shiftWeek(m,1):m;});
   const [suggestions, setSuggestions] = useState([]);
@@ -293,6 +306,7 @@ function App() {
   // Slot helpers
   const setSlot = (sk, meal) => setAllWeeks(p=>({...p,[wk]:{...p[wk],[sk]:meal}}));
   const clearSlot = (sk) => setAllWeeks(p=>{const w={...(p[wk]||{})};delete w[sk];return{...p,[wk]:w};});
+  const pantryFlat = Object.values(pantry).flat();
   const assignedNames = new Set(ALL_SLOTS.map(k=>weekSlots[k]?.name).filter(Boolean));
   const filledCount = ALL_SLOTS.filter(k=>weekSlots[k]).length;
 
@@ -380,7 +394,7 @@ function App() {
     const normP = s => s.replace(ADJ,'').replace(/\s+/g,' ').trim();
     const items = Object.values(map).filter(item => {
       const ci = normP(item.key);
-      return !pantry.some(p => {
+      return !pantryFlat.some(p => {
         const cp = normP(p);
         if (!cp) return false;
         if (ci === cp || ci+'s' === cp || ci === cp+'s') return true;
@@ -647,24 +661,29 @@ function App() {
           <h2 style={{fontFamily:"'Playfair Display',serif",color:C.dark,fontSize:22,margin:"0 0 4px"}}>Pantry Staples</h2>
           <p style={{color:C.light,fontSize:13,margin:"0 0 12px"}}>Ingredients you always have — excluded from shopping lists</p>
           <div style={{background:C.card,borderRadius:14,padding:"16px 18px",border:`1.5px solid ${C.border}`,marginBottom:28}}>
-            <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
-              {pantry.map(item=>(
-                <span key={item} style={{background:C.warm,color:C.med,fontSize:12,padding:"4px 10px",borderRadius:16,display:"inline-flex",alignItems:"center",gap:5}}>
-                  {item}
-                  <button onClick={()=>setPantry(p=>p.filter(x=>x!==item))} style={{background:"none",border:"none",cursor:"pointer",color:C.light,fontSize:14,lineHeight:1,padding:0}}>×</button>
-                </span>
-              ))}
-              {pantry.length===0 && <span style={{fontSize:13,color:C.light,fontStyle:"italic"}}>No pantry items yet</span>}
-            </div>
-            <div style={{display:"flex",gap:6}}>
+            {Object.entries(pantry).map(([section,items])=>(
+              <div key={section} style={{marginBottom:14}}>
+                <div style={{fontSize:11,fontWeight:700,color:C.light,textTransform:"uppercase",letterSpacing:.5,marginBottom:6}}>{section}</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                  {items.map(item=>(
+                    <span key={item} style={{background:C.warm,color:C.med,fontSize:12,padding:"4px 10px",borderRadius:16,display:"inline-flex",alignItems:"center",gap:5}}>
+                      {item}
+                      <button onClick={()=>setPantry(p=>{const s={...p};s[section]=s[section].filter(x=>x!==item);if(s[section].length===0)delete s[section];return s;})} style={{background:"none",border:"none",cursor:"pointer",color:C.light,fontSize:14,lineHeight:1,padding:0}}>×</button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {pantryFlat.length===0 && <div style={{fontSize:13,color:C.light,fontStyle:"italic",marginBottom:12}}>No pantry items yet</div>}
+            <div style={{display:"flex",gap:6,marginTop:4}}>
               <input
                 value={pantryInput}
                 onChange={e=>setPantryInput(e.target.value)}
-                onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();const v=pantryInput.trim().toLowerCase();if(v&&!pantry.includes(v)){setPantry(p=>[...p,v]);setPantryInput("");};}}}
+                onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();const v=pantryInput.trim().toLowerCase();if(v&&!pantryFlat.includes(v)){setPantry(p=>({...p,"Uncategorized":[...(p["Uncategorized"]||[]),v]}));setPantryInput("");};}}}
                 placeholder="Add ingredient…"
                 style={{flex:1,padding:"7px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontSize:13}}
               />
-              <button onClick={()=>{const v=pantryInput.trim().toLowerCase();if(v&&!pantry.includes(v)){setPantry(p=>[...p,v]);setPantryInput("");}}} style={btn(C.accent,C.white,{padding:"7px 14px",fontSize:12})}>Add</button>
+              <button onClick={()=>{const v=pantryInput.trim().toLowerCase();if(v&&!pantryFlat.includes(v)){setPantry(p=>({...p,"Uncategorized":[...(p["Uncategorized"]||[]),v]}));setPantryInput("");}}} style={btn(C.accent,C.white,{padding:"7px 14px",fontSize:12})}>Add</button>
             </div>
           </div>
 
