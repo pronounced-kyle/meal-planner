@@ -261,7 +261,6 @@ function App() {
   const [editingSlot, setEditingSlot] = useState(null);
   const [slotInput, setSlotInput] = useState("");
   const [stapleInput, setStapleInput] = useState("");
-  const [stapleLoading, setStapleLoading] = useState(false);
   const [checkedItems, setCheckedItems] = useState(()=>load("mp4-checked",{}));
 
   const wk = weekKey(currentMonday);
@@ -317,28 +316,27 @@ function App() {
     setCustomLoading(false);
   };
 
-  // Inline slot expand
-  const expandSlotMeal = async (sk) => {
+  // Inline slot add (title only)
+  const addSlotMeal = (sk) => {
     if (!slotInput.trim()) return;
-    setCustomLoading(true); setError(null);
-    const meal = await aiExpandRecipe(slotInput.trim(), prefs.apiKey, setError);
-    if (meal) {
-      setSlot(sk, {...meal, id:"i"+Date.now()});
-      setEditingSlot(null); setSlotInput("");
-    }
-    setCustomLoading(false);
+    setSlot(sk, {name:slotInput.trim(), id:"i"+Date.now()});
+    setEditingSlot(null); setSlotInput("");
   };
 
-  // Add staple via AI expand
-  const addStapleDirect = async () => {
+  // Add staple (title only)
+  const addStapleDirect = () => {
     if (!stapleInput.trim()) return;
-    setStapleLoading(true); setError(null);
-    const meal = await aiExpandRecipe(stapleInput.trim(), prefs.apiKey, setError);
-    if (meal) {
-      setStaples(p => [...p, {...meal, id:"s"+Date.now()}]);
-      setStapleInput("");
-    }
-    setStapleLoading(false);
+    setStaples(p => [...p, {name:stapleInput.trim(), id:"s"+Date.now()}]);
+    setStapleInput("");
+  };
+
+  // Generate full recipe for an existing title-only meal
+  const [expanding, setExpanding] = useState(null); // meal id being expanded
+  const generateRecipe = async (meal, updateFn) => {
+    setExpanding(meal.id); setError(null);
+    const full = await aiExpandRecipe(meal.name, prefs.apiKey, setError);
+    if (full) updateFn({...full, id:meal.id});
+    setExpanding(null);
   };
 
   // Drag & drop
@@ -486,12 +484,18 @@ function App() {
                           </div>
                           {meal ? (
                             <div draggable={!isPast} onDragStart={e=>{if(!isPast)onDragStart(e,meal,sk);}} onDragEnd={onDragEnd}
-                              onClick={(e)=>{ if(e.target.closest('button')) return; if(!isPast) tapSelectMeal(meal,sk); else setModal(meal); }}
+                              onClick={(e)=>{ if(e.target.closest('button')) return; if(!isPast) tapSelectMeal(meal,sk); else if(meal.ingredients) setModal(meal); }}
                               style={{cursor:isPast?"pointer":"grab"}}>
                               <div style={{fontSize:11,fontWeight:700,color:C.dark,lineHeight:1.3}}>{meal.name}</div>
-                              <div style={{fontSize:9,color:C.light,marginTop:1}}>{meal.cuisine} · {meal.cookTime}</div>
-                              <div style={{display:"flex",gap:3,marginTop:3}}>
-                                <button onClick={()=>setModal(meal)} style={btn(C.green,C.white,{padding:"2px 5px",fontSize:8,borderRadius:4})}>View</button>
+                              {meal.cuisine && <div style={{fontSize:9,color:C.light,marginTop:1}}>{meal.cuisine} · {meal.cookTime}</div>}
+                              <div style={{display:"flex",gap:3,marginTop:3,flexWrap:"wrap"}}>
+                                {meal.ingredients ? (
+                                  <button onClick={()=>setModal(meal)} style={btn(C.green,C.white,{padding:"2px 5px",fontSize:8,borderRadius:4})}>View</button>
+                                ) : (
+                                  <button onClick={()=>generateRecipe(meal,m=>setSlot(sk,m))} disabled={expanding===meal.id}
+                                    style={btn(C.accent,C.white,{padding:"2px 5px",fontSize:8,borderRadius:4,opacity:expanding===meal.id?0.6:1})}>
+                                    {expanding===meal.id?<span className="spinner" style={{width:10,height:10}}/>:"Generate Recipe"}</button>
+                                )}
                                 {isPast ? (
                                   <>
                                     <button onClick={()=>setFeedback(p=>({...p,[meal.name]:p[meal.name]==="up"?undefined:"up"}))}
@@ -507,13 +511,13 @@ function App() {
                           ) : isEditing ? (
                             <div style={{display:"flex",gap:3,alignItems:"center"}} onClick={e=>e.stopPropagation()}>
                               <input autoFocus value={slotInput} onChange={e=>setSlotInput(e.target.value)}
-                                onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();expandSlotMeal(sk);}if(e.key==="Escape"){setEditingSlot(null);setSlotInput("");}}}
+                                onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addSlotMeal(sk);}if(e.key==="Escape"){setEditingSlot(null);setSlotInput("");}}}
                                 onBlur={()=>{if(!slotInput.trim()){setEditingSlot(null);setSlotInput("");}}}
                                 placeholder="Type a meal..."
                                 style={{flex:1,padding:"4px 6px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:11,minWidth:0}} />
-                              <button onClick={()=>expandSlotMeal(sk)} disabled={customLoading||!slotInput.trim()}
-                                style={btn(C.accent,C.white,{padding:"3px 6px",fontSize:8,borderRadius:4,opacity:(customLoading||!slotInput.trim())?.5:1})}>
-                                {customLoading?"…":"Go"}
+                              <button onClick={()=>addSlotMeal(sk)} disabled={!slotInput.trim()}
+                                style={btn(C.accent,C.white,{padding:"3px 6px",fontSize:8,borderRadius:4,opacity:!slotInput.trim()?0.5:1})}>
+                                Add
                               </button>
                             </div>
                           ) : (
@@ -671,24 +675,30 @@ function App() {
             <div key={meal.id} style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:10,padding:"10px 14px",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:14,fontWeight:700,color:C.dark}}>{meal.name}</div>
-                <div style={{fontSize:12,color:C.light}}>{meal.cuisine} · {meal.cookTime}</div>
+                {meal.cuisine && <div style={{fontSize:12,color:C.light}}>{meal.cuisine} · {meal.cookTime}</div>}
               </div>
               <div style={{display:"flex",gap:4,flexShrink:0}}>
-                <button onClick={()=>setModal(meal)} style={btn(C.green,C.white,{padding:"4px 8px",fontSize:11})}>Recipe</button>
+                {meal.ingredients ? (
+                  <button onClick={()=>setModal(meal)} style={btn(C.green,C.white,{padding:"4px 8px",fontSize:11})}>Recipe</button>
+                ) : (
+                  <button onClick={()=>generateRecipe(meal,m=>setStaples(p=>p.map(s=>s.id===meal.id?m:s)))} disabled={expanding===meal.id}
+                    style={btn(C.accent,C.white,{padding:"4px 8px",fontSize:11,opacity:expanding===meal.id?0.6:1})}>
+                    {expanding===meal.id?<><span className="spinner" style={{width:12,height:12,marginRight:4}}/>Generating…</>:"Generate Recipe"}</button>
+                )}
                 <button onClick={()=>setStaples(p=>p.filter(s=>s.id!==meal.id))} style={btn("transparent",C.red,{padding:"4px 8px",fontSize:11,border:`1px solid ${C.red}`})}>×</button>
               </div>
             </div>
           ))}
           <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:10,padding:"12px 14px",marginTop:10,marginBottom:6}}>
-            <div style={{fontSize:12,color:C.light,marginBottom:8}}>Add a new staple — type a meal name and AI will expand it into a full recipe.</div>
+            <div style={{fontSize:12,color:C.light,marginBottom:8}}>Add a new staple — you can generate a full recipe later.</div>
             <div style={{display:"flex",gap:6}}>
               <input value={stapleInput} onChange={e=>setStapleInput(e.target.value)}
                 onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addStapleDirect();}}}
                 placeholder="e.g. Chicken teriyaki bowl"
                 style={{flex:1,padding:"8px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontSize:13}} />
-              <button onClick={addStapleDirect} disabled={stapleLoading||!stapleInput.trim()}
-                style={btn(C.accent,C.white,{padding:"8px 14px",fontSize:12,opacity:(stapleLoading||!stapleInput.trim())?.6:1})}>
-                {stapleLoading ? <><span className="spinner" style={{marginRight:6}}/>Adding…</> : "Add Meal"}
+              <button onClick={addStapleDirect} disabled={!stapleInput.trim()}
+                style={btn(C.accent,C.white,{padding:"8px 14px",fontSize:12,opacity:!stapleInput.trim()?0.6:1})}>
+                Add Meal
               </button>
             </div>
           </div>
