@@ -470,9 +470,10 @@ function App() {
                 const today = new Date(); today.setHours(0,0,0,0);
                 const dayDate = new Date(dt); dayDate.setHours(0,0,0,0);
                 const isPast = dayDate < today;
+                const isToday = dayDate.getTime()===today.getTime();
                 const slotBadgeColor = {breakfast:"#c98a2e",lunch:C.green,dinner:C.accent};
                 return (
-                  <div key={day} style={{flex:1,minWidth:120,background:isWE?C.warm:C.card,border:`1.5px solid ${C.border}`,borderRadius:12,padding:"10px 8px 8px",opacity:isPast?.55:1}}>
+                  <div key={day} style={{flex:1,minWidth:120,background:isPast?"#e8ecea":isWE?C.warm:C.card,border:`2px solid ${isToday?C.green:C.border}`,borderRadius:12,padding:"10px 8px 8px",opacity:isPast?0.5:1,boxShadow:isToday?`0 0 0 2px ${C.green}33`:undefined}}>
                     <div style={{textAlign:"center",marginBottom:8}}>
                       <div style={{fontSize:11,fontWeight:700,color:C.light,textTransform:"uppercase",letterSpacing:.5}}>{day}</div>
                       <div style={{fontSize:10,color:C.light}}>{dt.toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>
