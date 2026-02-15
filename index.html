@@ -226,6 +226,7 @@ function App() {
   const [page, setPage] = useState("plan");
   const [prefs, setPrefs] = useState(()=>load("mp4-prefs",DEFAULT_PREFS));
   const [staples, setStaples] = useState(()=>load("mp4-staples",DEFAULT_STAPLES));
+  const [pantry, setPantry] = useState(()=>load("mp4-pantry",["salt","pepper","olive oil","butter","rice","bread","sugar","flour","garlic powder","onion powder","paprika","cumin"]));
   const [allWeeks, setAllWeeks] = useState(()=>load("mp4-weeks",{}));
   const [currentMonday, setCurrentMonday] = useState(()=>{const t=new Date();const m=getMonday(t);return t.getDay()===6?shiftWeek(m,1):m;});
   const [suggestions, setSuggestions] = useState([]);
@@ -240,12 +241,14 @@ function App() {
   const [tapSelected, setTapSelected] = useState(null); // { meal, fromSlot } or null
   const [customText, setCustomText] = useState("");
   const [customLoading, setCustomLoading] = useState(false);
+  const [pantryInput, setPantryInput] = useState("");
 
   const wk = weekKey(currentMonday);
   const weekSlots = allWeeks[wk] || {};
 
   // Save on change
   useEffect(()=>save("mp4-staples",staples),[staples]);
+  useEffect(()=>save("mp4-pantry",pantry),[pantry]);
   useEffect(()=>save("mp4-prefs",prefs),[prefs]);
   useEffect(()=>save("mp4-weeks",allWeeks),[allWeeks]);
 
@@ -318,7 +321,8 @@ function App() {
       meal.ingredients.forEach(ing=>{
         const norm=ing.toLowerCase().replace(/[½¼¾⅓⅔⅛]+/g,"").trim();
         const nm=norm.match(/^([\d./½¼¾⅓⅔⅛]+\s*(?:lb|lbs|oz|cups?|tbsp|tsp|inch|inches|cloves?|medium|large|small|bunch|cans?|can|pkg|package)?\s*(?:of\s)?)?(.+)/i);
-        const base=nm&&nm[2]?nm[2].replace(/,.*$/,"").trim().replace(/\s+/g," "):norm;
+        const raw=nm&&nm[2]?nm[2].replace(/,.*$/,"").trim().replace(/\s+/g," "):norm;
+        const base=raw.replace(/^(lbs?|oz|cups?|tbsp|tsp|inches?|cloves?|bunch(?:es)?|cans?|pkg|packages?|heads?|pieces?)\s+/i,"").trim()||raw;
         const qty=nm&&nm[1]?nm[1].trim():"";
         const mk=`${meal.name}::${base}`;
         if(seen[mk])return; seen[mk]=true;
@@ -326,8 +330,18 @@ function App() {
         if(qty && !map[base].quantities.includes(qty)) map[base].quantities.push(qty);
       });
     });
-    // Group by store section
-    const items = Object.values(map);
+    // Filter out pantry items (fuzzy: strips adjectives, handles plurals + substring matching)
+    const ADJ = /\b(fresh|dried|ground|boneless|skinless|large|medium|small|thin|thick|chopped|diced|sliced|minced|whole|raw|cooked|low-sodium|reduced-sodium)\s*/gi;
+    const normP = s => s.replace(ADJ,'').replace(/\s+/g,' ').trim();
+    const items = Object.values(map).filter(item => {
+      const ci = normP(item.key);
+      return !pantry.some(p => {
+        const cp = normP(p);
+        if (!cp) return false;
+        if (ci === cp || ci+'s' === cp || ci === cp+'s') return true;
+        return ci.includes(cp) || cp.includes(ci);
+      });
+    });
     const grouped = [];
     const used = new Set();
     STORE_SECTIONS.forEach(([section, keywords]) => {
@@ -549,9 +563,10 @@ function App() {
                     <div style={{fontSize:12,fontWeight:700,color:C.light,textTransform:"uppercase",letterSpacing:.5,marginBottom:6,paddingBottom:4,borderBottom:`1px solid ${C.border}`}}>{g.section}</div>
                     <div style={{paddingLeft:4}}>
                       {g.items.map(item=>(
-                        <div key={item.key} style={{fontSize:13,color:C.dark,padding:"3px 0",lineHeight:1.5,display:"flex",justifyContent:"space-between",gap:8}}>
-                          <span>{item.name}</span>
+                        <div key={item.key} style={{fontSize:13,color:C.dark,padding:"3px 0",lineHeight:1.5,display:"flex",alignItems:"center",gap:8}}>
+                          <span style={{flex:1}}>{item.name}</span>
                           {item.quantities.length>0 && <span style={{fontSize:11,color:C.light,whiteSpace:"nowrap"}}>{item.quantities.join(" + ")}</span>}
+                          <button title="Add to pantry" onClick={()=>{if(!pantry.includes(item.key))setPantry(p=>[...p,item.key]);}} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,cursor:"pointer",color:C.light,fontSize:12,lineHeight:1,padding:"1px 4px",flexShrink:0}}>+</button>
                         </div>
                       ))}
                     </div>
@@ -561,6 +576,31 @@ function App() {
               </div>
             );
           })() : <div style={{background:C.card,borderRadius:14,padding:24,textAlign:"center",border:`1.5px dashed ${C.border}`,color:C.light,fontSize:14,marginBottom:28}}>Assign meals to your week first.</div>}
+
+          {/* Pantry Staples */}
+          <h2 style={{fontFamily:"'Playfair Display',serif",color:C.dark,fontSize:22,margin:"0 0 4px"}}>Pantry Staples</h2>
+          <p style={{color:C.light,fontSize:13,margin:"0 0 12px"}}>Ingredients you always have — excluded from shopping lists</p>
+          <div style={{background:C.card,borderRadius:14,padding:"16px 18px",border:`1.5px solid ${C.border}`,marginBottom:28}}>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>
+              {pantry.map(item=>(
+                <span key={item} style={{background:C.warm,color:C.med,fontSize:12,padding:"4px 10px",borderRadius:16,display:"inline-flex",alignItems:"center",gap:5}}>
+                  {item}
+                  <button onClick={()=>setPantry(p=>p.filter(x=>x!==item))} style={{background:"none",border:"none",cursor:"pointer",color:C.light,fontSize:14,lineHeight:1,padding:0}}>×</button>
+                </span>
+              ))}
+              {pantry.length===0 && <span style={{fontSize:13,color:C.light,fontStyle:"italic"}}>No pantry items yet</span>}
+            </div>
+            <div style={{display:"flex",gap:6}}>
+              <input
+                value={pantryInput}
+                onChange={e=>setPantryInput(e.target.value)}
+                onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();const v=pantryInput.trim().toLowerCase();if(v&&!pantry.includes(v)){setPantry(p=>[...p,v]);setPantryInput("");};}}}
+                placeholder="Add ingredient…"
+                style={{flex:1,padding:"7px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontSize:13}}
+              />
+              <button onClick={()=>{const v=pantryInput.trim().toLowerCase();if(v&&!pantry.includes(v)){setPantry(p=>[...p,v]);setPantryInput("");}}} style={btn(C.accent,C.white,{padding:"7px 14px",fontSize:12})}>Add</button>
+            </div>
+          </div>
 
           {/* Staples */}
           <h2 style={{fontFamily:"'Playfair Display',serif",color:C.dark,fontSize:22,margin:"0 0 4px"}}>⭐ Staples ({staples.length})</h2>
