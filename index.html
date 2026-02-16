@@ -275,6 +275,7 @@ function App() {
   const [stapleInput, setStapleInput] = useState("");
   const [checkedItems, setCheckedItems] = useState(()=>load("mp4-checked",{}));
   const [cooks, setCooks] = useState(()=>load("mp4-cooks",{}));
+  const [lockedSlots, setLockedSlots] = useState(()=>load("mp4-locked",{}));
 
   const wk = weekKey(currentMonday);
   const weekSlots = allWeeks[wk] || {};
@@ -287,6 +288,7 @@ function App() {
   useEffect(()=>save("mp4-feedback",feedback),[feedback]);
   useEffect(()=>save("mp4-checked",checkedItems),[checkedItems]);
   useEffect(()=>save("mp4-cooks",cooks),[cooks]);
+  useEffect(()=>save("mp4-locked",lockedSlots),[lockedSlots]);
 
   // ── Auto-populate staples on empty weeks ──
   useEffect(()=>{
@@ -346,19 +348,23 @@ function App() {
     setEditingSlot(null);
   };
 
-  // Re-roll all staple slots (shuffle staples into STAPLE_PATTERN slots)
+  // Re-roll all staple slots (shuffle staples into STAPLE_PATTERN slots, skip locked)
   const rerollStaples = () => {
     if (staples.length === 0) return;
     const shuffled = [...staples].sort(()=>Math.random()-0.5);
     const newSlots = {...(allWeeks[wk]||{})};
     let si = 0;
     ALL_SLOTS.forEach((slotKey, i) => {
-      if (STAPLE_PATTERN[i]) {
+      if (STAPLE_PATTERN[i] && !lockedSlots[`${wk}::${slotKey}`]) {
         newSlots[slotKey] = shuffled[si % shuffled.length];
         si++;
       }
     });
     setAllWeeks(prev => ({...prev, [wk]: newSlots}));
+  };
+  const toggleLock = (sk) => {
+    const key = `${wk}::${sk}`;
+    setLockedSlots(p => {const n={...p}; if(n[key]) delete n[key]; else n[key]=true; return n;});
   };
 
   // Add staple (title only)
@@ -553,7 +559,11 @@ function App() {
                                       style={btn(feedback[meal.name]==="down"?C.red:"transparent",feedback[meal.name]==="down"?C.white:C.red,{padding:"2px 5px",fontSize:8,borderRadius:4,border:`1px solid ${C.red}`})}>×</button>
                                   </>
                                 ) : (
-                                  <button onClick={()=>clearSlot(sk)} style={btn("transparent",C.red,{padding:"2px 5px",fontSize:8,borderRadius:4,border:`1px solid ${C.red}`})}>×</button>
+                                  <>
+                                    <button onClick={()=>toggleLock(sk)}
+                                      style={btn(lockedSlots[`${wk}::${sk}`]?"#f59e0b":"transparent",lockedSlots[`${wk}::${sk}`]?"#fff":"#f59e0b",{padding:"2px 5px",fontSize:8,borderRadius:4,border:`1px solid #f59e0b`})}>{lockedSlots[`${wk}::${sk}`]?"🔒":"🔓"}</button>
+                                    <button onClick={()=>clearSlot(sk)} style={btn("transparent",C.red,{padding:"2px 5px",fontSize:8,borderRadius:4,border:`1px solid ${C.red}`})}>×</button>
+                                  </>
                                 )}
                               </div>
                             </div>
