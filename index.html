@@ -50,12 +50,16 @@ const SERVINGS = "2 adults + 1 toddler";
 const ALL_SLOTS = DAYS.flatMap(d => SLOT_MAP[d].map(t => `${d}-${t}`));
 
 // Staple slot pattern: 21 entries (B/L/D × 7).
-// M-F: dinner only. Sat/Sun: lunch + dinner.  (9 staple slots, 12 open)
+// Mon/Tue/Thu/Fri dinners = staples. Wed/Sat/Sun = open for new meals.
 const STAPLE_PATTERN = [
-  false,false,true,  false,false,true,  false,false,true,
-  false,false,true,  false,false,true,  false,true,true,
-  false,true,true
+  false,false,true,  false,false,true,  false,false,false,
+  false,false,true,  false,false,true,  false,false,false,
+  false,false,false
 ];
+// Cook required for staple slots: Mon/Thu dinners → MC (user doesn't cook those days)
+const STAPLE_COOK = {
+  "Mon-dinner":"MC", "Tue-dinner":null, "Thu-dinner":"MC", "Fri-dinner":null
+};
 
 const STORE_SECTIONS = [
   ["Produce", ["broccoli","bell pepper","pepper","snap peas","zucchini","cherry tomato","tomato","onion","red onion","cucumber","spinach","baby spinach","ginger","garlic","lemon","lime","scallion","green onion","cilantro","basil","mushroom","bok choy","cabbage","lettuce","bean sprout","jalapeño","avocado","sweet potato","eggplant","corn","kale","arugula","shallot"]],
@@ -294,17 +298,26 @@ function App() {
   // ── Auto-populate staples on empty weeks ──
   useEffect(()=>{
     const existing = allWeeks[wk];
-    if (existing && Object.keys(existing).length > 0) return; // already has meals
+    if (existing && Object.keys(existing).length > 0) return;
     if (staples.length === 0) return;
-    const newSlots = {};
-    let si = 0;
+    const mcStaples = staples.filter(s=>s.owner==="MC");
+    const allShuffled = [...staples].sort(()=>Math.random()-0.5);
+    const mcShuffled = mcStaples.length>0 ? [...mcStaples].sort(()=>Math.random()-0.5) : allShuffled;
+    const newSlots = {}; const newCooks = {...cooks};
+    let si=0, mi=0;
     ALL_SLOTS.forEach((slotKey, i) => {
-      if (STAPLE_PATTERN[i] && staples.length > 0) {
-        newSlots[slotKey] = staples[si % staples.length];
-        si++;
+      if (STAPLE_PATTERN[i]) {
+        const reqCook = STAPLE_COOK[slotKey];
+        if (reqCook==="MC" && mcShuffled.length>0) {
+          newSlots[slotKey] = mcShuffled[mi % mcShuffled.length]; mi++;
+        } else {
+          newSlots[slotKey] = allShuffled[si % allShuffled.length]; si++;
+        }
+        if (reqCook) newCooks[`${wk}::${slotKey}`] = reqCook;
       }
     });
     setAllWeeks(prev => ({...prev, [wk]: newSlots}));
+    setCooks(newCooks);
   }, [wk, staples.length]);
 
   // Slot helpers
@@ -352,16 +365,25 @@ function App() {
   // Re-roll all staple slots (shuffle staples into STAPLE_PATTERN slots, skip locked)
   const rerollStaples = () => {
     if (staples.length === 0) return;
-    const shuffled = [...staples].sort(()=>Math.random()-0.5);
+    const mcStaples = staples.filter(s=>s.owner==="MC");
+    const allShuffled = [...staples].sort(()=>Math.random()-0.5);
+    const mcShuffled = mcStaples.length>0 ? [...mcStaples].sort(()=>Math.random()-0.5) : allShuffled;
     const newSlots = {...(allWeeks[wk]||{})};
-    let si = 0;
+    const newCooks = {...cooks};
+    let si=0, mi=0;
     ALL_SLOTS.forEach((slotKey, i) => {
       if (STAPLE_PATTERN[i] && !lockedSlots[`${wk}::${slotKey}`]) {
-        newSlots[slotKey] = shuffled[si % shuffled.length];
-        si++;
+        const reqCook = STAPLE_COOK[slotKey];
+        if (reqCook==="MC" && mcShuffled.length>0) {
+          newSlots[slotKey] = mcShuffled[mi % mcShuffled.length]; mi++;
+        } else {
+          newSlots[slotKey] = allShuffled[si % allShuffled.length]; si++;
+        }
+        if (reqCook) newCooks[`${wk}::${slotKey}`] = reqCook;
       }
     });
     setAllWeeks(prev => ({...prev, [wk]: newSlots}));
+    setCooks(newCooks);
   };
   const toggleLock = (sk) => {
     const key = `${wk}::${sk}`;
@@ -757,25 +779,32 @@ function App() {
 
           {/* Staples */}
           <h2 style={{fontFamily:"'Playfair Display',serif",color:C.dark,fontSize:22,margin:"0 0 4px"}}>⭐ Staples ({staples.length})</h2>
-          <p style={{color:C.light,fontSize:13,margin:"0 0 12px"}}>These auto-fill each new week. Goal: ~4 staples + 3 new.</p>
-          {staples.map(meal=>(
-            <div key={meal.id} style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:10,padding:"10px 14px",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <p style={{color:C.light,fontSize:13,margin:"0 0 12px"}}>Auto-fill Mon/Tue/Thu/Fri dinners. Mon & Thu are always MC.</p>
+          {staples.map(meal=>{
+            const oc=meal.owner==="CK"?"#3b82f6":meal.owner==="MC"?"#ef4444":null;
+            return (
+            <div key={meal.id} style={{background:C.card,border:`1.5px solid ${C.border}`,borderLeft:oc?`4px solid ${oc}`:undefined,borderRadius:10,padding:"10px 14px",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:14,fontWeight:700,color:C.dark}}>{meal.name}</div>
                 {meal.cuisine && <div style={{fontSize:12,color:C.light}}>{meal.cuisine} · {meal.cookTime}</div>}
               </div>
-              <div style={{display:"flex",gap:4,flexShrink:0}}>
+              <div style={{display:"flex",gap:4,flexShrink:0,alignItems:"center"}}>
+                <button onClick={()=>setStaples(p=>p.map(s=>s.id===meal.id?{...s,owner:!s.owner?"CK":s.owner==="CK"?"MC":undefined}:s))}
+                  style={btn(oc||"#e2e8f0",oc?"#fff":"#64748b",{padding:"3px 8px",fontSize:11,fontWeight:800,borderRadius:6,minWidth:32})}>
+                  {meal.owner||"—"}
+                </button>
                 {meal.ingredients ? (
                   <button onClick={()=>setModal(meal)} style={btn(C.green,C.white,{padding:"4px 8px",fontSize:11})}>Recipe</button>
                 ) : (
-                  <button onClick={()=>generateRecipe(meal,m=>setStaples(p=>p.map(s=>s.id===meal.id?m:s)))} disabled={expanding===meal.id}
+                  <button onClick={()=>generateRecipe(meal,m=>setStaples(p=>p.map(s=>s.id===meal.id?{...m,owner:meal.owner}:s)))} disabled={expanding===meal.id}
                     style={btn(C.accent,C.white,{padding:"4px 8px",fontSize:11,opacity:expanding===meal.id?0.6:1})}>
                     {expanding===meal.id?<><span className="spinner" style={{width:12,height:12,marginRight:4}}/>Generating…</>:"Generate Recipe"}</button>
                 )}
                 <button onClick={()=>setStaples(p=>p.filter(s=>s.id!==meal.id))} style={btn("transparent",C.red,{padding:"4px 8px",fontSize:11,border:`1px solid ${C.red}`})}>×</button>
               </div>
             </div>
-          ))}
+            );
+          })}
           <div style={{background:C.card,border:`1.5px solid ${C.border}`,borderRadius:10,padding:"12px 14px",marginTop:10,marginBottom:6}}>
             <div style={{fontSize:12,color:C.light,marginBottom:8}}>Add a new staple — you can generate a full recipe later.</div>
             <div style={{display:"flex",gap:6}}>
