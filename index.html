@@ -279,6 +279,7 @@ function App() {
 
   const wk = weekKey(currentMonday);
   const weekSlots = allWeeks[wk] || {};
+  const longPressRef = useRef(false);
 
   // Save on change
   useEffect(()=>save("mp4-staples",staples),[staples]);
@@ -535,15 +536,25 @@ function App() {
                           </div>
                           {meal ? (
                             <div draggable={!isPast} onDragStart={e=>{if(!isPast)onDragStart(e,meal,sk);}} onDragEnd={onDragEnd}
-                              onClick={(e)=>{ if(e.target.closest('button')) return; if(!isPast) tapSelectMeal(meal,sk); else if(meal.ingredients) setModal(meal); }}
-                              style={{cursor:isPast?"pointer":"grab"}}>
+                              onClick={(e)=>{ if(e.target.closest('button')||longPressRef.current) return; setModal(meal); }}
+                              onTouchStart={(e)=>{
+                                if(isPast||e.target.closest('button')) return;
+                                longPressRef.current=false;
+                                const t=setTimeout(()=>{longPressRef.current=true;tapSelectMeal(meal,sk);},500);
+                                const el=e.currentTarget;
+                                const end=()=>{clearTimeout(t);el.removeEventListener('touchend',end);el.removeEventListener('touchmove',move);};
+                                const move=()=>{clearTimeout(t);longPressRef.current=false;el.removeEventListener('touchend',end);el.removeEventListener('touchmove',move);};
+                                el.addEventListener('touchend',end,{once:true});
+                                el.addEventListener('touchmove',move,{once:true});
+                              }}
+                              onTouchEnd={()=>{setTimeout(()=>{longPressRef.current=false;},50);}}
+                              onContextMenu={e=>{if(!isPast){e.preventDefault();tapSelectMeal(meal,sk);}}}
+                              style={{cursor:"pointer"}}>
                               <div style={{fontSize:11,fontWeight:700,color:C.dark,lineHeight:1.3}}>{meal.name}</div>
                               {meal.cuisine && <div style={{fontSize:9,color:C.light,marginTop:1}}>{meal.cuisine} · {meal.cookTime}</div>}
                               <div style={{display:"flex",gap:3,marginTop:3,flexWrap:"wrap",alignItems:"center"}}>
-                                {meal.ingredients ? (
-                                  <button onClick={()=>setModal(meal)} style={btn(C.green,C.white,{padding:"2px 5px",fontSize:8,borderRadius:4})}>View</button>
-                                ) : (
-                                  <button onClick={()=>generateRecipe(meal,m=>setSlot(sk,m))} disabled={expanding===meal.id}
+                                {!meal.ingredients && (
+                                  <button onClick={(e)=>{e.stopPropagation();generateRecipe(meal,m=>setSlot(sk,m));}} disabled={expanding===meal.id}
                                     style={btn(C.accent,C.white,{padding:"2px 5px",fontSize:8,borderRadius:4,opacity:expanding===meal.id?0.6:1})}>
                                     {expanding===meal.id?<span className="spinner" style={{width:10,height:10}}/>:"Generate Recipe"}</button>
                                 )}
