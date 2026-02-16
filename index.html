@@ -274,6 +274,7 @@ function App() {
   const [slotInput, setSlotInput] = useState("");
   const [stapleInput, setStapleInput] = useState("");
   const [checkedItems, setCheckedItems] = useState(()=>load("mp4-checked",{}));
+  const [cooks, setCooks] = useState(()=>load("mp4-cooks",{}));
 
   const wk = weekKey(currentMonday);
   const weekSlots = allWeeks[wk] || {};
@@ -285,6 +286,7 @@ function App() {
   useEffect(()=>save("mp4-weeks",allWeeks),[allWeeks]);
   useEffect(()=>save("mp4-feedback",feedback),[feedback]);
   useEffect(()=>save("mp4-checked",checkedItems),[checkedItems]);
+  useEffect(()=>save("mp4-cooks",cooks),[cooks]);
 
   // ── Auto-populate staples on empty weeks ──
   useEffect(()=>{
@@ -493,7 +495,7 @@ function App() {
                 const dayDate = new Date(dt); dayDate.setHours(0,0,0,0);
                 const isPast = dayDate < today;
                 const isToday = dayDate.getTime()===today.getTime();
-                const slotBadgeColor = {breakfast:"#c98a2e",lunch:C.green,dinner:C.accent};
+                const COOK_COLORS = {CK:"#3b82f6",MC:"#ef4444"};
                 return (
                   <div key={day} style={{flex:1,minWidth:120,background:isPast?"#e8ecea":isWE?C.warm:C.card,border:`2px solid ${isToday?C.green:C.border}`,borderRadius:12,padding:"10px 8px 8px",opacity:isPast?0.5:1,boxShadow:isToday?`0 0 0 2px ${C.green}33`:undefined}}>
                     <div style={{textAlign:"center",marginBottom:8}}>
@@ -508,6 +510,10 @@ function App() {
                       const isTyping=editingSlot==="type:"+sk;
                       const isEditing=isMenu||isTyping;
                       const badgeLabel=type==="breakfast"?"B":type==="lunch"?"L":"D";
+                      const cookKey=`${wk}::${sk}`;
+                      const cook=cooks[cookKey];
+                      const cookColor=cook?COOK_COLORS[cook]:null;
+                      const toggleCook=()=>setCooks(p=>{const next=!p[cookKey]?"CK":p[cookKey]==="CK"?"MC":undefined;const n={...p};if(next)n[cookKey]=next;else delete n[cookKey];return n;});
                       return (
                         <div key={sk} className={`slot-drop ${isOver?'over':''} ${isTargetable?'slot-targetable':''} ${isTapSel?'tap-selected':''}`}
                           onDragOver={e=>{if(!isPast)onDragOverSlot(e,sk);}} onDragLeave={onDragLeave} onDrop={e=>{if(!isPast)onDrop(e,sk);}}
@@ -516,9 +522,9 @@ function App() {
                             if(tapSelected&&!meal){tapPlaceInSlot(sk);}
                             else if(!tapSelected&&!meal&&!editingSlot){setEditingSlot("menu:"+sk);}
                           }}
-                          style={{minHeight:48,borderRadius:8,marginBottom:4,border:`1.5px ${meal?'solid':'dashed'} ${isOver||isTargetable?C.accent:C.border}`,background:meal?C.card:"transparent",padding:meal?"5px 7px":"5px 7px",cursor:isTargetable?"pointer":((!meal&&!isPast)?"text":"default")}}>
-                          <div style={{fontSize:9,fontWeight:700,color:slotBadgeColor[type],textTransform:"uppercase",letterSpacing:.5,marginBottom:2,display:"flex",alignItems:"center",gap:4}}>
-                            <span style={{background:slotBadgeColor[type],color:C.white,borderRadius:3,padding:"0 4px",fontSize:8,lineHeight:"14px"}}>{badgeLabel}</span>
+                          style={{minHeight:48,borderRadius:8,marginBottom:4,border:`1.5px ${meal?'solid':'dashed'} ${isOver||isTargetable?C.accent:cookColor||C.border}`,borderLeft:cookColor?`4px solid ${cookColor}`:undefined,background:meal?(cookColor?cookColor+"12":C.card):"transparent",padding:meal?"5px 7px":"5px 7px",cursor:isTargetable?"pointer":((!meal&&!isPast)?"text":"default")}}>
+                          <div style={{fontSize:9,fontWeight:700,color:C.light,textTransform:"uppercase",letterSpacing:.5,marginBottom:2,display:"flex",alignItems:"center",gap:4}}>
+                            <span style={{background:C.light,color:C.white,borderRadius:3,padding:"0 4px",fontSize:8,lineHeight:"14px"}}>{badgeLabel}</span>
                             {type}
                           </div>
                           {meal ? (
@@ -527,7 +533,7 @@ function App() {
                               style={{cursor:isPast?"pointer":"grab"}}>
                               <div style={{fontSize:11,fontWeight:700,color:C.dark,lineHeight:1.3}}>{meal.name}</div>
                               {meal.cuisine && <div style={{fontSize:9,color:C.light,marginTop:1}}>{meal.cuisine} · {meal.cookTime}</div>}
-                              <div style={{display:"flex",gap:3,marginTop:3,flexWrap:"wrap"}}>
+                              <div style={{display:"flex",gap:3,marginTop:3,flexWrap:"wrap",alignItems:"center"}}>
                                 {meal.ingredients ? (
                                   <button onClick={()=>setModal(meal)} style={btn(C.green,C.white,{padding:"2px 5px",fontSize:8,borderRadius:4})}>View</button>
                                 ) : (
@@ -535,6 +541,10 @@ function App() {
                                     style={btn(C.accent,C.white,{padding:"2px 5px",fontSize:8,borderRadius:4,opacity:expanding===meal.id?0.6:1})}>
                                     {expanding===meal.id?<span className="spinner" style={{width:10,height:10}}/>:"Generate Recipe"}</button>
                                 )}
+                                <button onClick={toggleCook}
+                                  style={btn(cook?COOK_COLORS[cook]:"#e2e8f0",cook?"#fff":"#64748b",{padding:"2px 6px",fontSize:8,borderRadius:4,fontWeight:800,letterSpacing:.5,minWidth:26})}>
+                                  {cook||"—"}
+                                </button>
                                 {isPast ? (
                                   <>
                                     <button onClick={()=>setFeedback(p=>({...p,[meal.name]:p[meal.name]==="up"?undefined:"up"}))}
