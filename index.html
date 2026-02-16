@@ -49,13 +49,12 @@ const SLOT_MAP = {
 const SERVINGS = "2 adults + 1 toddler";
 const ALL_SLOTS = DAYS.flatMap(d => SLOT_MAP[d].map(t => `${d}-${t}`));
 
-// Staple slot pattern: 21 entries (B/L/D × 7). Only auto-fill some dinners with staples.
-// Pattern per day: [B=false, L=false, D=true/false]
-// Staple dinners: Mon, Wed, Thu, Sat, Sun (5 staples, 16 open)
+// Staple slot pattern: 21 entries (B/L/D × 7).
+// M-F: dinner only. Sat/Sun: lunch + dinner.  (9 staple slots, 12 open)
 const STAPLE_PATTERN = [
-  false,false,true,  false,false,false, false,false,true,
-  false,false,true,  false,false,false, false,false,true,
-  false,false,true
+  false,false,true,  false,false,true,  false,false,true,
+  false,false,true,  false,false,true,  false,true,true,
+  false,true,true
 ];
 
 const STORE_SECTIONS = [
@@ -337,6 +336,29 @@ function App() {
     setEditingSlot(null); setSlotInput("");
   };
 
+  // Add random staple to slot
+  const addRandomStaple = (sk) => {
+    if (staples.length === 0) return;
+    const s = staples[Math.floor(Math.random()*staples.length)];
+    setSlot(sk, s);
+    setEditingSlot(null);
+  };
+
+  // Re-roll all staple slots (shuffle staples into STAPLE_PATTERN slots)
+  const rerollStaples = () => {
+    if (staples.length === 0) return;
+    const shuffled = [...staples].sort(()=>Math.random()-0.5);
+    const newSlots = {...(allWeeks[wk]||{})};
+    let si = 0;
+    ALL_SLOTS.forEach((slotKey, i) => {
+      if (STAPLE_PATTERN[i]) {
+        newSlots[slotKey] = shuffled[si % shuffled.length];
+        si++;
+      }
+    });
+    setAllWeeks(prev => ({...prev, [wk]: newSlots}));
+  };
+
   // Add staple (title only)
   const addStapleDirect = () => {
     if (!stapleInput.trim()) return;
@@ -482,7 +504,9 @@ function App() {
                       const sk=`${day}-${type}`;const meal=weekSlots[sk];const isOver=dragOver===sk&&!isPast;
                       const isTargetable=tapSelected&&!meal&&!isPast;
                       const isTapSel=tapSelected&&meal&&tapSelected.meal.name===meal.name&&tapSelected.fromSlot===sk;
-                      const isEditing=editingSlot===sk;
+                      const isMenu=editingSlot==="menu:"+sk;
+                      const isTyping=editingSlot==="type:"+sk;
+                      const isEditing=isMenu||isTyping;
                       const badgeLabel=type==="breakfast"?"B":type==="lunch"?"L":"D";
                       return (
                         <div key={sk} className={`slot-drop ${isOver?'over':''} ${isTargetable?'slot-targetable':''} ${isTapSel?'tap-selected':''}`}
@@ -490,7 +514,7 @@ function App() {
                           onClick={()=>{
                             if(isPast) return;
                             if(tapSelected&&!meal){tapPlaceInSlot(sk);}
-                            else if(!tapSelected&&!meal&&!isEditing){setEditingSlot(sk);setSlotInput("");}
+                            else if(!tapSelected&&!meal&&!editingSlot){setEditingSlot("menu:"+sk);}
                           }}
                           style={{minHeight:48,borderRadius:8,marginBottom:4,border:`1.5px ${meal?'solid':'dashed'} ${isOver||isTargetable?C.accent:C.border}`,background:meal?C.card:"transparent",padding:meal?"5px 7px":"5px 7px",cursor:isTargetable?"pointer":((!meal&&!isPast)?"text":"default")}}>
                           <div style={{fontSize:9,fontWeight:700,color:slotBadgeColor[type],textTransform:"uppercase",letterSpacing:.5,marginBottom:2,display:"flex",alignItems:"center",gap:4}}>
@@ -523,7 +547,18 @@ function App() {
                                 )}
                               </div>
                             </div>
-                          ) : isEditing ? (
+                          ) : isMenu ? (
+                            <div style={{display:"flex",flexDirection:"column",gap:3}} onClick={e=>e.stopPropagation()}>
+                              {staples.length>0 && <select autoFocus onChange={e=>{if(e.target.value){const s=staples.find(x=>x.id===e.target.value);if(s){setSlot(sk,s);setEditingSlot(null);}}}} defaultValue=""
+                                style={{padding:"3px 4px",borderRadius:5,border:`1px solid ${C.border}`,fontSize:10,color:C.dark,background:C.white}}>
+                                <option value="" disabled>Pick a staple…</option>
+                                {staples.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+                              </select>}
+                              {staples.length>0 && <button onClick={()=>addRandomStaple(sk)} style={btn(C.green,C.white,{padding:"3px 6px",fontSize:9,borderRadius:4,width:"100%"})}>🎲 Random staple</button>}
+                              <button onClick={()=>{setEditingSlot("type:"+sk);setSlotInput("");}} style={btn(C.accent,C.white,{padding:"3px 6px",fontSize:9,borderRadius:4,width:"100%"})}>✏️ Type new meal</button>
+                              <button onClick={()=>setEditingSlot(null)} style={{background:"none",border:"none",fontSize:9,color:C.light,cursor:"pointer",padding:"2px 0"}}>Cancel</button>
+                            </div>
+                          ) : isTyping ? (
                             <div style={{display:"flex",gap:3,alignItems:"center"}} onClick={e=>e.stopPropagation()}>
                               <input autoFocus value={slotInput} onChange={e=>setSlotInput(e.target.value)}
                                 onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();addSlotMeal(sk);}if(e.key==="Escape"){setEditingSlot(null);setSlotInput("");}}}
@@ -552,9 +587,10 @@ function App() {
             <div>
               {/* Action bar */}
               <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:10}}>
-                <button onClick={generate} disabled={loading} style={btn(C.accent,C.white,{padding:"10px 18px",borderRadius:10,opacity:loading?.6:1})}>
+                <button onClick={generate} disabled={loading} style={btn(C.accent,C.white,{padding:"10px 18px",borderRadius:10,opacity:loading?0.6:1})}>
                   {loading ? <><span className="spinner" style={{marginRight:8}}/>Generating…</> : "✨ Generate 10 Ideas"}
                 </button>
+                {staples.length>0 && <button onClick={rerollStaples} style={btn(C.green,C.white,{padding:"10px 16px",borderRadius:10})}>🎲 Re-roll Staples</button>}
                 {filledCount>0 && <button onClick={exportPDF} style={btn(C.dark,C.white,{padding:"10px 16px",borderRadius:10})}>📄 Export PDF</button>}
                 {filledCount>0 && <button onClick={()=>{setAllWeeks(p=>({...p,[wk]:{}}));}} style={btn("transparent",C.red,{padding:"10px 16px",borderRadius:10,border:`1.5px solid ${C.red}`})}>Clear Week</button>}
               </div>
