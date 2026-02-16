@@ -50,15 +50,19 @@ const SERVINGS = "2 adults + 1 toddler";
 const ALL_SLOTS = DAYS.flatMap(d => SLOT_MAP[d].map(t => `${d}-${t}`));
 
 // Staple slot pattern: 21 entries (B/L/D × 7).
-// Mon/Tue/Thu/Fri dinners = staples. Wed/Sat/Sun = open for new meals.
+// Mon/Thu/Fri dinners = staples. Tue = pizza (Order). Wed/Sat/Sun = open for new meals.
 const STAPLE_PATTERN = [
-  false,false,true,  false,false,true,  false,false,false,
-  false,false,true,  false,false,true,  false,false,false,
+  false,false,true,  false,false,false,  false,false,false,
+  false,false,true,  false,false,true,   false,false,false,
   false,false,false
 ];
-// Cook required for staple slots: Mon/Thu dinners → MC (user doesn't cook those days)
+// Cook required for staple slots: Mon/Thu → MC
 const STAPLE_COOK = {
-  "Mon-dinner":"MC", "Tue-dinner":null, "Thu-dinner":"MC", "Fri-dinner":null
+  "Mon-dinner":"MC", "Thu-dinner":"MC", "Fri-dinner":null
+};
+// Fixed slots that always get a specific meal + cook
+const FIXED_SLOTS = {
+  "Tue-dinner": { meal:{name:"Pizza", id:"fixed-pizza"}, cook:"Order" }
 };
 
 const STORE_SECTIONS = [
@@ -299,14 +303,20 @@ function App() {
   useEffect(()=>{
     const existing = allWeeks[wk];
     if (existing && Object.keys(existing).length > 0) return;
-    if (staples.length === 0) return;
+    if (staples.length === 0 && Object.keys(FIXED_SLOTS).length === 0) return;
     const mcStaples = staples.filter(s=>s.owner==="MC");
     const allShuffled = [...staples].sort(()=>Math.random()-0.5);
     const mcShuffled = mcStaples.length>0 ? [...mcStaples].sort(()=>Math.random()-0.5) : allShuffled;
     const newSlots = {}; const newCooks = {...cooks};
     let si=0, mi=0;
+    // Fixed slots first
+    Object.entries(FIXED_SLOTS).forEach(([sk,{meal,cook}])=>{
+      newSlots[sk] = meal;
+      if (cook) newCooks[`${wk}::${sk}`] = cook;
+    });
+    // Then staple pattern
     ALL_SLOTS.forEach((slotKey, i) => {
-      if (STAPLE_PATTERN[i]) {
+      if (STAPLE_PATTERN[i] && staples.length > 0) {
         const reqCook = STAPLE_COOK[slotKey];
         if (reqCook==="MC" && mcShuffled.length>0) {
           newSlots[slotKey] = mcShuffled[mi % mcShuffled.length]; mi++;
@@ -370,6 +380,11 @@ function App() {
     const mcShuffled = mcStaples.length>0 ? [...mcStaples].sort(()=>Math.random()-0.5) : allShuffled;
     const newSlots = {...(allWeeks[wk]||{})};
     const newCooks = {...cooks};
+    // Fixed slots (not affected by lock)
+    Object.entries(FIXED_SLOTS).forEach(([sk,{meal,cook}])=>{
+      newSlots[sk] = meal;
+      if (cook) newCooks[`${wk}::${sk}`] = cook;
+    });
     let si=0, mi=0;
     ALL_SLOTS.forEach((slotKey, i) => {
       if (STAPLE_PATTERN[i] && !lockedSlots[`${wk}::${slotKey}`]) {
@@ -524,7 +539,7 @@ function App() {
                 const dayDate = new Date(dt); dayDate.setHours(0,0,0,0);
                 const isPast = dayDate < today;
                 const isToday = dayDate.getTime()===today.getTime();
-                const COOK_COLORS = {CK:"#3b82f6",MC:"#ef4444"};
+                const COOK_COLORS = {CK:"#3b82f6",MC:"#ef4444",Order:"#94a3b8"};
                 return (
                   <div key={day} style={{flex:1,minWidth:120,background:isPast?"#e8ecea":isWE?C.warm:C.card,border:`2px solid ${isToday?C.green:C.border}`,borderRadius:12,padding:"10px 8px 8px",opacity:isPast?0.5:1,boxShadow:isToday?`0 0 0 2px ${C.green}33`:undefined}}>
                     <div style={{textAlign:"center",marginBottom:8}}>
@@ -542,7 +557,7 @@ function App() {
                       const cookKey=`${wk}::${sk}`;
                       const cook=cooks[cookKey];
                       const cookColor=cook?COOK_COLORS[cook]:null;
-                      const toggleCook=()=>setCooks(p=>{const next=!p[cookKey]?"CK":p[cookKey]==="CK"?"MC":undefined;const n={...p};if(next)n[cookKey]=next;else delete n[cookKey];return n;});
+                      const toggleCook=()=>setCooks(p=>{const cur=p[cookKey];const next=!cur?"CK":cur==="CK"?"MC":cur==="MC"?"Order":undefined;const n={...p};if(next)n[cookKey]=next;else delete n[cookKey];return n;});
                       return (
                         <div key={sk} className={`slot-drop ${isOver?'over':''} ${isTargetable?'slot-targetable':''} ${isTapSel?'tap-selected':''}`}
                           onDragOver={e=>{if(!isPast)onDragOverSlot(e,sk);}} onDragLeave={onDragLeave} onDrop={e=>{if(!isPast)onDrop(e,sk);}}
