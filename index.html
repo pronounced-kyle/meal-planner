@@ -211,6 +211,105 @@ const C = { bg:"#f2f5f3",card:"#ffffff",dark:"#1a332a",med:"#2d5741",light:"#5a7
 const btn = (bg,fg,x={}) => ({background:bg,color:fg,border:"none",borderRadius:8,padding:"8px 16px",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",transition:"all .15s",...x});
 const secH = {fontFamily:"'Playfair Display',serif",fontSize:14,color:C.dark,margin:"14px 0 4px",borderBottom:`1px solid ${C.border}`,paddingBottom:4};
 
+// ─── Screensaver ───
+const REDWOOD_PHOTOS = [
+  "https://images.unsplash.com/photo-1703446592359-fefe8472cc79?w=1920&q=80&auto=format&fit=crop",
+  "https://images.unsplash.com/photo-1760570317577-fa68f4738373?w=1920&q=80&auto=format&fit=crop",
+  "https://images.unsplash.com/photo-1760725134733-e86a42a4017b?w=1920&q=80&auto=format&fit=crop",
+  "https://images.unsplash.com/photo-1759188534271-be7832eff679?w=1920&q=80&auto=format&fit=crop",
+  "https://images.unsplash.com/photo-1755299159474-37aef0f8dfa9?w=1920&q=80&auto=format&fit=crop",
+  "https://images.unsplash.com/photo-1754238845778-a08713f2e1d8?w=1920&q=80&auto=format&fit=crop",
+];
+
+function NightCanvas({ onWake }) {
+  const canvasRef = useRef(null);
+  const animRef = useRef(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    let w, h;
+    const resize = () => { w = canvas.width = window.innerWidth; h = canvas.height = window.innerHeight; };
+    resize();
+    window.addEventListener("resize", resize);
+    const stars = Array.from({ length: 180 }, () => ({
+      x: Math.random(), y: Math.random(),
+      r: Math.random() * 1.8 + 0.4,
+      phase: Math.random() * Math.PI * 2,
+      speed: Math.random() * 0.3 + 0.15,
+      bright: Math.random() * 0.5 + 0.5,
+    }));
+    const loop = (t) => {
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, w, h);
+      for (const s of stars) {
+        const twinkle = s.bright + Math.sin(t * 0.001 * s.speed + s.phase) * 0.35;
+        const a = Math.max(0, Math.min(1, twinkle));
+        ctx.beginPath();
+        ctx.arc(s.x * w, s.y * h, s.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,255,255,${a})`;
+        ctx.fill();
+      }
+      animRef.current = requestAnimationFrame(loop);
+    };
+    animRef.current = requestAnimationFrame(loop);
+    return () => { cancelAnimationFrame(animRef.current); window.removeEventListener("resize", resize); };
+  }, []);
+
+  return <canvas ref={canvasRef} onClick={onWake} onTouchStart={onWake}
+    style={{ position:"fixed", inset:0, zIndex:9999, cursor:"pointer" }} />;
+}
+
+function DaySlideshow({ onWake }) {
+  const [idx, setIdx] = useState(0);
+  const [fade, setFade] = useState(true);
+  const INTERVAL = 10000; // 10s per photo
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setFade(false);
+      setTimeout(() => { setIdx(i => (i + 1) % REDWOOD_PHOTOS.length); setFade(true); }, 1200);
+    }, INTERVAL);
+    return () => clearInterval(timer);
+  }, []);
+
+  const kenBurns = {
+    animation: "kb 20s ease-in-out infinite alternate",
+  };
+
+  return (
+    <div onClick={onWake} onTouchStart={onWake} style={{
+      position:"fixed", inset:0, zIndex:9999, cursor:"pointer", background:"#000", overflow:"hidden",
+    }}>
+      <style>{`
+        @keyframes kb {
+          0% { transform: scale(1.0) translate(0, 0); }
+          100% { transform: scale(1.15) translate(-2%, -1.5%); }
+        }
+      `}</style>
+      <div style={{
+        position:"absolute", inset:0,
+        backgroundImage: `url(${REDWOOD_PHOTOS[idx]})`,
+        backgroundSize:"cover", backgroundPosition:"center",
+        opacity: fade ? 1 : 0,
+        transition: "opacity 1.2s ease-in-out",
+        ...kenBurns,
+      }} />
+      <div style={{
+        position:"absolute", inset:0,
+        background: "linear-gradient(to bottom, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.05) 40%, rgba(0,0,0,0.3) 100%)",
+      }} />
+    </div>
+  );
+}
+
+function Screensaver({ active, onWake }) {
+  if (!active) return null;
+  const hr = new Date().getHours();
+  const isNight = hr >= 20 || hr < 8;
+  return isNight ? <NightCanvas onWake={onWake} /> : <DaySlideshow onWake={onWake} />;
+}
+
 // ─── RecipeModal ───
 function RecipeModal({meal,onClose,staples,onPromote}) {
   if (!meal) return null;
@@ -284,6 +383,28 @@ function App() {
   const [checkedItems, setCheckedItems] = useState(()=>load("mp4-checked",{}));
   const [cooks, setCooks] = useState(()=>load("mp4-cooks",{}));
   const [lockedSlots, setLockedSlots] = useState(()=>load("mp4-locked",{}));
+  const [screenSaverOn, setScreenSaverOn] = useState(false);
+  const idleTimer = useRef(null);
+
+  // Idle timer → screensaver after 3 min
+  const resetIdle = useCallback(() => {
+    if (screenSaverOn) return;
+    clearTimeout(idleTimer.current);
+    idleTimer.current = setTimeout(() => setScreenSaverOn(true), 3 * 60 * 1000);
+  }, [screenSaverOn]);
+
+  useEffect(() => {
+    const events = ["pointerdown","pointermove","keydown","scroll","touchstart"];
+    events.forEach(e => window.addEventListener(e, resetIdle, { passive: true }));
+    resetIdle();
+    return () => { clearTimeout(idleTimer.current); events.forEach(e => window.removeEventListener(e, resetIdle)); };
+  }, [resetIdle]);
+
+  const wakeUp = useCallback(() => {
+    setScreenSaverOn(false);
+    clearTimeout(idleTimer.current);
+    idleTimer.current = setTimeout(() => setScreenSaverOn(true), 3 * 60 * 1000);
+  }, []);
 
   const wk = weekKey(currentMonday);
   const weekSlots = allWeeks[wk] || {};
@@ -912,6 +1033,7 @@ function App() {
       )}
 
       <RecipeModal meal={modal} onClose={()=>setModal(null)} staples={staples} onPromote={promoteToStaple} />
+      <Screensaver active={screenSaverOn} onWake={wakeUp} />
     </div>
   );
 }
