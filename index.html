@@ -262,51 +262,41 @@ function NightCanvas({ onWake }) {
 
 function DaySlideshow({ onWake }) {
   const [idx, setIdx] = useState(0);
-  const [fade, setFade] = useState(true);
-  const [loaded, setLoaded] = useState({});
+  const [prev, setPrev] = useState(-1);
   const INTERVAL = 10000;
 
-  // Preload all images on mount
+  // Preload all images into browser cache on mount
   useEffect(() => {
-    REDWOOD_PHOTOS.forEach((src, i) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => setLoaded(prev => ({ ...prev, [i]: true }));
-      img.src = src;
-    });
+    REDWOOD_PHOTOS.forEach(src => { const img = new Image(); img.src = src; });
   }, []);
 
   useEffect(() => {
     const timer = setInterval(() => {
-      setFade(false);
-      setTimeout(() => { setIdx(i => (i + 1) % REDWOOD_PHOTOS.length); setFade(true); }, 1200);
+      setPrev(idx);
+      setIdx(i => (i + 1) % REDWOOD_PHOTOS.length);
     }, INTERVAL);
     return () => clearInterval(timer);
-  }, []);
+  }, [idx]);
+
+  // Only render current + previous (for crossfade), not all 6
+  const imgStyle = (visible) => ({
+    position:"absolute", top:0, left:0, width:"100vw", height:"100vh",
+    objectFit:"cover", objectPosition:"center",
+    opacity: visible ? 1 : 0,
+    transition: "opacity 1.5s ease-in-out",
+    transform: "scale(1.05)",
+    pointerEvents:"none", display:"block",
+  });
 
   return (
     <div onClick={onWake} onTouchStart={onWake} style={{
-      position:"fixed", inset:0, zIndex:9999, cursor:"pointer", background:"#000", overflow:"hidden",
+      position:"fixed", top:0, left:0, width:"100vw", height:"100vh",
+      zIndex:9999, cursor:"pointer", background:"#000", overflow:"hidden",
     }}>
-      <style>{`
-        @keyframes kb {
-          0% { transform: scale(1.0) translate(0, 0); }
-          100% { transform: scale(1.15) translate(-2%, -1.5%); }
-        }
-      `}</style>
-      {REDWOOD_PHOTOS.map((src, i) => (
-        <img key={i} src={src} crossOrigin="anonymous" alt=""
-          style={{
-            position:"absolute", top:0, left:0, width:"100%", height:"100%",
-            objectFit:"cover",
-            opacity: i === idx && fade ? 1 : 0,
-            transition: "opacity 1.2s ease-in-out",
-            animation: i === idx ? "kb 20s ease-in-out infinite alternate" : "none",
-            pointerEvents:"none",
-          }} />
-      ))}
+      {prev >= 0 && <img key={"p"+prev} src={REDWOOD_PHOTOS[prev]} alt="" style={imgStyle(false)} />}
+      <img key={"c"+idx} src={REDWOOD_PHOTOS[idx]} alt="" style={imgStyle(true)} />
       <div style={{
-        position:"absolute", inset:0, pointerEvents:"none",
+        position:"absolute", top:0, left:0, width:"100%", height:"100%", pointerEvents:"none",
         background: "linear-gradient(to bottom, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.05) 40%, rgba(0,0,0,0.3) 100%)",
       }} />
     </div>
