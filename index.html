@@ -390,7 +390,7 @@ function App() {
   const resetIdle = useCallback(() => {
     if (screenSaverOn) return;
     clearTimeout(idleTimer.current);
-    idleTimer.current = setTimeout(() => setScreenSaverOn(true), 10 * 1000);
+    idleTimer.current = setTimeout(() => setScreenSaverOn(true), 2 * 60 * 1000);
   }, [screenSaverOn]);
 
   useEffect(() => {
@@ -403,7 +403,7 @@ function App() {
   const wakeUp = useCallback(() => {
     setScreenSaverOn(false);
     clearTimeout(idleTimer.current);
-    idleTimer.current = setTimeout(() => setScreenSaverOn(true), 10 * 1000);
+    idleTimer.current = setTimeout(() => setScreenSaverOn(true), 2 * 60 * 1000);
   }, []);
 
   const wk = weekKey(currentMonday);
